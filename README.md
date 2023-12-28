@@ -1,2 +1,2 @@
-# sundries
+# snippets
 some miscellaneous code
