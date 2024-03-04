@@ -8,6 +8,7 @@ from datetime import datetime
 
 from database.connpool import get_instance
 from history import ChatHistory
+from pymysql.converters import escape_string
 from tools import utils
 from tools.logger import logger
 
@@ -183,12 +184,12 @@ def save_history(table: str, history: ChatHistory, client: MySqLClient = None) -
         logger.error(f"{error}消息 id 不能为空")
         return False
 
-    question = utils.trim(history.question)
+    question = escape_string(utils.trim(history.question))
     if not question:
         logger.error(f"{error}用户提问的问题不能为空")
         return False
 
-    answer = utils.trim(history.answer)
+    answer = escape_string(utils.trim(history.answer))
     if not answer:
         logger.error(f"{error}服务提供的答案不能为空")
         return False
@@ -198,7 +199,7 @@ def save_history(table: str, history: ChatHistory, client: MySqLClient = None) -
     timestamp = datetime.fromtimestamp(created).strftime("%Y-%m-%d %H:%M:%S")
 
     fb_score = history.fb_score if history.fb_score is not None else 0
-    fb_detail = utils.trim(history.fb_detail)
+    fb_detail = escape_string(utils.trim(history.fb_detail))
 
     sql = f"INSERT INTO `{table}` (`conversation_id`, `message_id`, `question`, `answer`, `model`, `created`, `fb_score`, `fb_detail`) VALUES ('{conversation_id}', '{message_id}', '{question}', '{answer}', '{model}', '{timestamp}', '{fb_score}', '{fb_detail}');"
 
@@ -214,7 +215,7 @@ def save_feedback(
 
     table = utils.trim(table)
     message_id = utils.trim(message_id)
-    fb_detail = utils.trim(fb_detail)
+    fb_detail = escape_string(utils.trim(fb_detail))
 
     if not table:
         goon, warn = False, "表名不能为空"
