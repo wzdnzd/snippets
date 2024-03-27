@@ -37,7 +37,10 @@ async function handleRequest(request) {
     if (!accessToken
         || !accessToken.startsWith('Bearer ')
         || accessToken.substring(7) !== (SECRET_KEY || '')) {
-        return new Response('Unauthorized', { status: 401 });
+        return new Response(JSON.stringify({ message: 'Unauthorized', success: false }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' }
+        });
     }
 
     const url = new URL(request.url);
@@ -48,7 +51,10 @@ async function handleRequest(request) {
     } else if (url.pathname === '/v1/chat/completions' && request.method === 'POST') {
         response = await handleProxy(request);
     } else {
-        response = new Response('Invalid request method or path', { status: 405 });
+        response = new Response(JSON.stringify({ message: 'Invalid request method or path', success: false }), {
+            status: 405,
+            headers: { 'Content-Type': 'application/json' }
+        });
     }
 
     return response;
@@ -890,7 +896,10 @@ async function handleProxy(request) {
     const count = keys.keys.length;
 
     if (count <= 0) {
-        return new Response('Service is temporarily unavailable', { status: 503 })
+        return new Response(JSON.stringify({ message: 'Service is temporarily unavailable', success: false }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' }
+        });
     }
 
     const requestBody = await request.json();
@@ -947,7 +956,10 @@ async function handleProxy(request) {
 
     // no valid response after retries
     if (!response) {
-        return new Response('Internal Server Error', { status: 500 });
+        return new Response(JSON.stringify({ message: 'Internal server error', success: false }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' }
+        });
     }
 
     // return the original response
