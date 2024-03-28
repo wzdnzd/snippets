@@ -17,10 +17,19 @@
 
 addEventListener('fetch', event => {
     event.respondWith(handleRequest(event.request))
-})
+});
+
+addEventListener('scheduled', event => {
+    event.waitUntil(doSomeTaskOnASchedule());
+});
+
+async function doSomeTaskOnASchedule() {
+    await handleSyncFromRemote();
+}
 
 const KV = openapis;
 const maxRetries = 3;
+const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
 
 async function handleRequest(request) {
     const corsHeaders = {
@@ -911,7 +920,7 @@ async function handleProxy(request) {
     headers.set('Accept-Language', 'zh-CN,zh;q=0.9');
     headers.set('Accept-Encoding', 'gzip, deflate, br, zstd');
     headers.set('Accept', 'application/json, text/event-stream');
-    headers.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36');
+    headers.set('User-Agent', userAgent);
 
     let response;
 
@@ -1005,6 +1014,60 @@ async function handleProxy(request) {
     return newResponse;
 }
 
+async function handleSyncFromRemote() {
+    const subscribeLink = (REMOTE_SUBLINK || '').trim();
+    if (!subscribeLink) {
+        return new Response(JSON.stringify({ message: 'Skip sync due to no subscribe link found', success: true }), { status: 200 });
+    }
+
+    const headers = {
+        'User-Agent': userAgent,
+        'Accept': '*/*',
+        'Accept-Encoding': 'gzip, deflate, br, zstd'
+    }
+    const content = await fetchRemoteLinks(subscribeLink, headers, 3, 250);
+    if (!content) {
+        return new Response(JSON.stringify({
+            message: 'Failed to sync because of fetch remote data error',
+            success: false
+        }), { status: 500 });
+    }
+
+    // split with comma
+    const targets = content.split(',').filter(s => s.trim() !== '');
+    if (targets.length <= 0) {
+        return new Response(JSON.stringify({
+            message: 'Failed to sync due to remote data is empty',
+            success: false
+        }), { status: 500 });
+    }
+
+    const apiPaths = new Set();
+    for (const t of targets) {
+        try {
+            const url = new URL(t);
+            const apiPath = url.origin + url.pathname;
+            const accessToken = url.searchParams.get("token") || '';
+
+            // write to kv namespace
+            await KV.put(apiPath, accessToken);
+            apiPaths.add(apiPath);
+        } catch {
+            console.warn(`Ignore invalid link: ${t}`);
+        }
+    }
+
+    // remove invalid data
+    const keys = await KV.list();
+    for (let key of keys.keys) {
+        if (!apiPaths.has(key.name)) {
+            await KV.delete(key.name);
+        }
+    }
+
+    return new Response(JSON.stringify({ message: `sync finished, found ${apiPaths.size} data`, success: true }), { status: 200 });
+}
+
 function transformToJSON(text, model, messageId) {
     return JSON.stringify({
         'id': `chatcmpl-${messageId}`,
@@ -1056,4 +1119,25 @@ async function streamResponse(response, writable, model, messageId) {
     }
 
     push();
+}
+
+async function fetchRemoteLinks(url, headers, retries = 3, delay = 250) {
+    try {
+        const response = await fetch(url, { headers: headers });
+        if (!response.ok) {
+            throw new Error('Fetch remote links failed');
+        }
+
+        return await response.text();
+    } catch (error) {
+        if (retries > 1) {
+            console.warn(`Failed to request network, will retry after ${delay / 1000} seconds`);
+
+            await new Promise(resolve => setTimeout(resolve, delay));
+            return fetchRemoteLinks(url, retries - 1, delay);
+        } else {
+            console.error('Maximum number of failed retries reached');
+            return '';
+        }
+    }
 }
