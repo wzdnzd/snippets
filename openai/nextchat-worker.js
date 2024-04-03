@@ -926,7 +926,26 @@ async function handleProxy(request) {
 
     for (let retry = 0; retry < maxRetries; retry++) {
         const targetURL = keys.keys[Math.floor(Math.random() * count)].name;
-        const accessToken = (await KV.get(targetURL) || '').trim();
+
+        const content = (await KV.get(targetURL) || '').trim();
+        let accessToken;
+
+        if (content) {
+            try {
+                const text = JSON.parse(content).token || '';
+                const accessTokens = text.trim()
+                    .split(',')
+                    .map(s => s.trim())
+                    .filter(s => s !== '');
+
+                if (accessTokens.length > 0) {
+                    const index = Math.floor(Math.random() * accessTokens.length);
+                    accessToken = accessTokens[index];
+                }
+            } catch (error) {
+                console.error(`Invalid config for ${targetURL}: `, error);
+            }
+        }
 
         let proxyURL = targetURL;
         if (!proxyURL.endsWith('/api/chat-stream')
@@ -1048,9 +1067,11 @@ async function handleSyncFromRemote() {
             const url = new URL(t);
             const apiPath = url.origin + url.pathname;
             const accessToken = url.searchParams.get("token") || '';
+            const category = (url.searchParams.get("unstable") || '').toLowerCase();
+            const unstable = category === '' || category === 'true';
 
             // write to kv namespace
-            await KV.put(apiPath, accessToken);
+            await KV.put(apiPath, JSON.stringify({ token: accessToken, unstable: unstable }));
             apiPaths.add(apiPath);
         } catch {
             console.warn(`Ignore invalid link: ${t}`);
@@ -1060,7 +1081,19 @@ async function handleSyncFromRemote() {
     // remove invalid data
     const keys = await KV.list();
     for (let key of keys.keys) {
+        let deleted = false;
+
         if (!apiPaths.has(key.name)) {
+            const text = await KV.get(key.name);
+            try {
+                deleted = JSON.parse(text).unstable || false;
+            } catch (error) {
+                console.warn(`Found invalid config and will be deleted, key: ${key.name}`);
+                deleted = true;
+            }
+        }
+
+        if (deleted) {
             await KV.delete(key.name);
         }
     }
