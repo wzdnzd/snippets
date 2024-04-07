@@ -97,6 +97,8 @@ async function handleProxy(request) {
     }
 
     const requestBody = await request.json();
+    const isStreamReq = requestBody.stream || false;
+
     if (gpt35Only) {
         requestBody.model = "gpt-3.5-turbo";
     }
@@ -114,14 +116,23 @@ async function handleProxy(request) {
     let response;
 
     for (let retry = 0; retry < maxRetries; retry++) {
-        const targetURL = keys.keys[Math.floor(Math.random() * count)].name;
+        requestBody.stream = isStreamReq;
 
+        const targetURL = keys.keys[Math.floor(Math.random() * count)].name;
         const content = (await KV.get(targetURL) || '').trim();
         let accessToken;
 
         if (content) {
             try {
-                const text = JSON.parse(content).token || '';
+                const data = JSON.parse(content);
+
+                // target service don't support stream
+                const enableStream = data?.stream || data?.stream === undefined;
+                if (!enableStream) {
+                    requestBody.stream = false;
+                }
+
+                const text = data?.token || '';
                 const accessTokens = text.trim()
                     .split(',')
                     .map(s => s.trim())
@@ -186,31 +197,77 @@ async function handleProxy(request) {
 
     let newBody = response.body;
     const contentType = response.headers.get('Content-Type') || '';
-    const stream = contentType.includes('text/event-stream') || false;
 
-    if (!stream && response.status === 200) {
-        const isPlain = contentType.includes('text/plain') || false;
-        if (isPlain) {
-            const content = (await response.text())
-                .replace(/^\`\`\`json\n/, "").replace(/\n\`\`\`$/, "");
+    if (response.status === 200) {
+        if (isStreamReq && !contentType.includes('text/event-stream')) {
+            // need text/event-stream but got others
+            if (contentType.includes('application/json')) {
+                try {
+                    const data = await response.json();
+                    const model = data?.model || 'gpt-3.5-turbo';
 
-            // compress json data
-            const text = JSON.stringify(JSON.parse(content));
+                    // 'chatcmpl-'.length = 10
+                    const messageId = (data?.id || '').slice(10);
 
-            newBody = new ReadableStream({
-                start(controller) {
-                    controller.enqueue(new TextEncoder().encode(text));
-                    controller.close();
+                    const choices = data?.choices
+                    if (!choices || choices.length === 0) {
+                        return new Response(JSON.stringify({ message: 'No effective response', success: false }), {
+                            status: 503,
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                    }
+
+                    const record = choices[0].message || {};
+                    const message = record?.content || '';
+                    const content = transformToJSON(message, model, messageId);
+                    const text = `data: ${content}\n\ndata: [Done]`;
+
+                    newBody = new ReadableStream({
+                        start(controller) {
+                            controller.enqueue(new TextEncoder().encode(text));
+                            controller.close();
+                        }
+                    });
+
+                } catch (error) {
+                    console.error(`Error during parse response body with ${targetURL}, error: `, error);
+                    return new Response(JSON.stringify({ message: 'Internal server error', success: false }), {
+                        status: 500,
+                        headers: { 'Content-Type': 'application/json' }
+                    });
                 }
-            });
-        } else {
-            const { readable, writable } = new TransformStream();
+            } else {
+                const { readable, writable } = new TransformStream();
 
-            // transform chunk data to event-stream
-            streamResponse(response, writable, requestBody.model, generateUUID());
-            newBody = readable;
+                // transform chunk data to event-stream
+                streamResponse(response, writable, requestBody.model, generateUUID());
+                newBody = readable;
+            }
 
             newHeaders.set('Content-Type', 'text/event-stream');
+        } else if (!isStreamReq && !contentType.includes('application/json')) {
+            // need application/json
+            try {
+                const content = (await response.text())
+                    .replace(/^\`\`\`json\n/, "").replace(/\n\`\`\`$/, "");
+
+                // compress json data
+                const text = JSON.stringify(JSON.parse(content));
+                newBody = new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(new TextEncoder().encode(text));
+                        controller.close();
+                    }
+                });
+
+                newHeaders.set('Content-Type', 'application/json');
+            } catch (error) {
+                console.error(`Error during parse response body with ${targetURL}, Content-Type: ${contentType}, error: `, error);
+                return new Response(JSON.stringify({ message: 'Internal server error', success: false }), {
+                    status: 500,
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            }
         }
     }
 
@@ -258,9 +315,10 @@ async function handleSyncFromRemote() {
             const accessToken = url.searchParams.get("token") || '';
             const category = (url.searchParams.get("unstable") || '').toLowerCase();
             const unstable = category === '' || category === 'true';
+            const stream = (url.searchParams.get("stream") || 'true').toLowerCase() === 'true';
 
             // write to kv namespace
-            await KV.put(apiPath, JSON.stringify({ token: accessToken, unstable: unstable }));
+            await KV.put(apiPath, JSON.stringify({ token: accessToken, unstable: unstable, stream: stream }));
             apiPaths.add(apiPath);
         } catch {
             console.warn(`Ignore invalid link: ${t}`);
