@@ -61,6 +61,8 @@ async function handleRequest(request) {
         response = await handleListModels();
     } else if (url.pathname === '/v1/chat/completions' && request.method === 'POST') {
         response = await handleProxy(request);
+    } else if (url.pathname === '/v1/sync' && request.method === 'POST') {
+        response = await handleSyncFromRemote();
     } else {
         response = new Response(JSON.stringify({ message: 'Invalid request method or path', success: false }), {
             status: 405,
