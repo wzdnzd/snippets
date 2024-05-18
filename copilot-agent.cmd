@@ -38,6 +38,15 @@ if "!msterminal!" == "1" (
     set "warncolor=97"
 )
 
+@REM enable set auto start
+set "enableautostart=1"
+
+@REM enable set auto start
+set "enableautoupdate=1"
+
+@REM enable set auto start
+set "enablesetenv=1"
+
 @REM start flag
 set "startflag=0"
 
@@ -547,10 +556,12 @@ if "!binary!" NEQ "" if exist "!binary!" (
     del /f /q "!dest!\!software!" >nul 2>nul
     move "!binary!" "!dest!\!software!" >nul 2>nul
 
+    @echo [%ESC%[!infocolor!m信息%ESC%[0m] 检查到较新版本程序并下载完毕，即将重启服务
+
     @REM start
     call :restart
 
-    @echo [%ESC%[!infocolor!m信息%ESC%[0m] 检查到较新版本程序并已更新完毕
+    @echo [%ESC%[!infocolor!m信息%ESC%[0m] 程序更新完毕，服务已重启
 ) else (
     @echo [%ESC%[!infocolor!m信息%ESC%[0m] 当前已是最新版本，无需更新
 )
@@ -657,13 +668,13 @@ goto :eof
 call :privilege "goto :nopromptrunas" 0
 
 @REM allow auto start when user login
-call :autostart
+if "!enableautostart!" == "1" call :autostart
 
 @REM allow auto check update
-call :autoupdate
+if "!enableautoupdate!" == "1" call :autoupdate
 
 @REM set environment
-call :add_environment
+if "!enablesetenv!" == "1" call :add_environment
 
 goto :eof
 
@@ -694,9 +705,10 @@ if "!rawurl!" == "" goto :eof
 set proxy_urls[0]=https://mirror.ghproxy.com
 set proxy_urls[1]=https://gh.ddlc.top
 set proxy_urls[2]=https://hub.gitmirror.com
+set proxy_urls[3]=https://proxy.api.030101.xyz
 
 @REM random [0, 2]
-set /a num=!random! %% 3
+set /a num=!random! %% 4
 set "ghproxy=!proxy_urls[%num%]!"
 
 @REM github proxy
@@ -1073,14 +1085,28 @@ call :trim usertime "%~3"
 
 set "validflag=0"
 for /f "tokens=1-2 delims=:" %%a in ("!usertime!") do (
-    set /a "hours=%%a" 2>nul
-    set /a "minutes=%%b" 2>nul
-    if !hours! lss 24 if !minutes! lss 60 if !hours! geq 0 if !minutes! geq 0 (
+    set "hours=%%a" 2>nul
+    set "minutes=%%b" 2>nul
+
+    call :is_number hour_flag !hours!
+    call :is_number minute_flag !minutes!
+
+    if !hour_flag! == 1 if !minute_flag! == 1 if !hours! lss 24 if !minutes! lss 60 if !hours! geq 0 if !minutes! geq 0 (
         set "validflag=1"
     )
 )
 
 if "!validflag!" == "0" (call :promptinput "%~1" "%~2" 1) else (set "%~1=!usertime!")
+goto :eof
+
+
+@REM check if a variable is zero or a positive integer
+:is_number <result> <variable>
+set "%~1=0"
+call :trim variable "%~2"
+
+@echo !variable! | findstr /r /c:"^[0-9][0-9][ ]*$" >nul 2>nul && (set "%~1=1")
+
 goto :eof
 
 
