@@ -575,6 +575,15 @@ goto :eof
 set "%~1="
 set "release="
 
+@REM amd64 or 386
+call :get_arch version
+@echo version: !version!
+pause
+if "!version!" == "" (
+    @echo [%ESC%[91m错误%ESC%[0m] 下载失败，无法获取 操作系统 及 CPU 架构信息
+    goto :eof
+)
+
 @REM extract download url
 for /f "tokens=1* delims=:" %%a in ('curl --retry 5 -s -L "https://api.github.com/repos/linux-do/override/releases/latest?per_page=1" ^| findstr /i /r "https://github.com/linux-do/override/releases/download/.*/override-windows-amd64-.*.zip"') do set "release=%%b"
 
@@ -660,6 +669,18 @@ if "!failflag!" NEQ "0" (
     @echo [%ESC%[!warncolor!m提示%ESC%[0m] 文件下载失败，正在进行第 %ESC%[!warncolor!m!count!%ESC%[0m 次重试，下载链接：!downloadurl!
     goto :retry
 )
+goto :eof
+
+
+@REM get cpu and os version, see: https://github.com/linux-do/override/releases
+:get_arch <version>
+set "%~1="
+if "!PROCESSOR_ARCHITECTURE!" == "AMD64" (
+    set "%~1=amd64"
+) else if "!PROCESSOR_ARCHITECTURE!" == "X86" (
+    set "%~1=386"
+)
+
 goto :eof
 
 
