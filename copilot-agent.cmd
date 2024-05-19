@@ -38,14 +38,17 @@ if "!msterminal!" == "1" (
     set "warncolor=97"
 )
 
-@REM enable set auto start
-set "enableautostart=1"
+@REM enable replace max tokens
+set "enable_replace_max_token=1"
 
 @REM enable set auto start
-set "enableautoupdate=1"
+set "enable_auto_start=1"
 
-@REM enable set auto start
-set "enablesetenv=1"
+@REM enable set auto update
+set "enable_auto_update=1"
+
+@REM enable set environment for JetBrains IDE
+set "enable_set_env=1"
 
 @REM start flag
 set "startflag=0"
@@ -371,7 +374,10 @@ if "!asdaemon!" == "1" (
     ) else (
         start /min /b "" "!software!" >nul 2>&1
     )
-) else (!software!)
+) else (
+    @REM executing !software! directly will block and the postprocess method cannot be called
+    start "" "!software!"
+)
 
 goto :eof
 
@@ -686,17 +692,76 @@ goto :eof
 
 @REM config autostart and auto update
 :postprocess
+@REM allow change max tokens
+if "!enable_replace_max_token!" == "1" call :replace_max_tokens
+
 call :privilege "goto :nopromptrunas" 0
 
 @REM allow auto start when user login
-if "!enableautostart!" == "1" call :autostart
+if "!enable_auto_start!" == "1" call :autostart
 
 @REM allow auto check update
-if "!enableautoupdate!" == "1" call :autoupdate
+if "!enable_auto_update!" == "1" call :autoupdate
 
 @REM set environment
-if "!enablesetenv!" == "1" call :add_environment
+if "!enable_set_env!" == "1" call :add_environment
 
+goto :eof
+
+
+@REM change max tokens to 2048
+:replace_max_tokens
+@REM subpath of the file to be replaced
+set "subpath=dist\extension.js"
+
+set "pattern=\.maxPromptCompletionTokens\(([a-zA-Z0-9_]+),([0-9]+)\)"
+set "replacement=.maxPromptCompletionTokens($1,2048)"
+
+@REM iterate over all github copilot directories
+for /d %%d in (%USERPROFILE%\.vscode\extensions\github.copilot-*) do (
+    set "extension_path=%%d\!subpath!"
+    if exist "!extension_path!" (
+        set "backupfile=!extension_path!.bak"
+
+        @REM delete if exist backup file
+        if exist "!backupfile!" (
+            del /f /q "!backupfile!" >nul 2>nul
+        )
+
+        @REM backup
+        copy /y "!extension_path!" "!backupfile!" >nul 2>nul
+
+        @REM do search and replace with pattern
+        powershell -Command "(Get-Content '!extension_path!') -replace '!pattern!', '!replacement!' | Set-Content '!extension_path!'"
+    )
+)
+
+@echo [%ESC%[!infocolor!m信息%ESC%[0m] 最大 tokens 数值设置%ESC%[!infocolor!m完成%ESC%[0m
+goto :eof
+
+
+@REM recovery max tokens
+:recovery_max_tokens
+@REM subpath of the file to be recovery
+set "subpath=dist\extension.js"
+
+@REM iterate over all github copilot directories
+for /d %%d in (%USERPROFILE%\.vscode\extensions\github.copilot-*) do (
+    set "extension_path=%%d\!subpath!"
+    set "backupfile=!extension_path!.bak"
+
+    if exist "!backupfile!" (
+        @REM delete if exist extension file
+        if exist "!extension_path!" (
+            del /f /q "!extension_path!" >nul 2>nul
+        )
+
+        @REM replace
+        move "!backupfile!" "!extension_path!" >nul 2>nul
+    )
+)
+
+@echo [%ESC%[!infocolor!m信息%ESC%[0m] 最大 tokens 数值恢复%ESC%[!infocolor!m成功%ESC%[0m
 goto :eof
 
 
@@ -1222,6 +1287,9 @@ if "!msterminal!" == "1" (
     choice /t 6 /d n /n
 )
 if !errorlevel! == 2 exit /b 1
+
+@REM reset max tokens to default
+call :recovery_max_tokens
 
 @REM kill process
 call :privilege "goto :killprocess !software!" 0
