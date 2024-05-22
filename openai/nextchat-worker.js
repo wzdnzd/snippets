@@ -134,6 +134,11 @@ async function handleProxy(request) {
                     requestBody.stream = false;
                 }
 
+                // use default model instead of the request model if default model is set
+                if (data.defaultModel) {
+                    requestBody.model = data.defaultModel;
+                }
+
                 const text = data?.token || '';
                 const accessTokens = text.trim()
                     .split(',')
@@ -206,7 +211,7 @@ async function handleProxy(request) {
             if (contentType.includes('application/json')) {
                 try {
                     const data = await response.json();
-                    const model = data?.model || 'gpt-3.5-turbo';
+                    const model = data?.model || requestBody.model || 'gpt-3.5-turbo';
 
                     // 'chatcmpl-'.length = 10
                     const messageId = (data?.id || '').slice(10);
@@ -318,9 +323,10 @@ async function handleSyncFromRemote() {
             const category = (url.searchParams.get("unstable") || '').toLowerCase();
             const unstable = category === '' || category === 'true';
             const stream = (url.searchParams.get("stream") || 'true').toLowerCase() === 'true';
+            const defaultModel = url.searchParams.get("model") || '';
 
             // write to kv namespace
-            await KV.put(apiPath, JSON.stringify({ token: accessToken, unstable: unstable, stream: stream }));
+            await KV.put(apiPath, JSON.stringify({ token: accessToken, unstable: unstable, stream: stream, defaultModel: defaultModel }));
             apiPaths.add(apiPath);
         } catch {
             console.warn(`Ignore invalid link: ${t}`);
