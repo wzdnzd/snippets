@@ -245,7 +245,7 @@ class MailTM(TemporaryMail):
             return False
 
 
-class MOAKT(TemporaryMail):
+
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def http_error_302(
             self,
@@ -342,6 +342,5 @@ class MOAKT(TemporaryMail):
         utils.http_get(url=f"{self.api_address}/inbox/logout", headers=self.headers)
         return True
 
-
 def create_instance() -> TemporaryMail:
-    return MailTM() if random.randint(0, 1) == 0 else MOAKT()
+    return MailTM()
