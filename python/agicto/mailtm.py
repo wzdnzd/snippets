@@ -245,102 +245,16 @@ class MailTM(TemporaryMail):
             return False
 
 
-
-    class NoRedirect(urllib.request.HTTPRedirectHandler):
-        def http_error_302(
-            self,
-            req: urllib.request.Request,
-            fp: IO[bytes],
-            code: int,
-            msg: str,
-            headers: HTTPMessage,
-        ) -> IO[bytes]:
-            return fp
-
-    def __init__(self) -> None:
-        self.api_address = "https://www.moakt.com/zh"
-        self.headers = {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            "Origin": self.api_address,
-            "Referer": self.api_address,
-            "User-Agent": utils.USER_AGENT,
-        }
-
-    def get_domains_list(self) -> list:
-        content = utils.http_get(url=self.api_address)
-        if not content:
-            return []
-
-        return re.findall(r'<option\s+value=".*">@([a-zA-Z0-9\.\-_]+)<\/option>', content)
-
-    def _make_account_request(self, username: str, domain: str, retry: int = 3) -> Account:
-        if retry <= 0:
-            return None
-
-        payload = {
-            "domain": domain,
-            "username": username,
-            "preferred_domain": domain,
-            "setemail": "创建",
-        }
-
-        data = bytes(json.dumps(payload), encoding="UTF8")
-        try:
-            # 禁止重定向
-            opener = urllib.request.build_opener(self.NoRedirect)
-            request = urllib.request.Request(
-                url=f"{self.api_address}/inbox",
-                data=data,
-                headers=self.headers,
-                method="POST",
-            )
-            response = opener.open(request, timeout=10)
-            if not response or response.getcode() not in [200, 302]:
-                return None
-
-            self.headers["Cookie"] = response.getheader("Set-Cookie")
-            return Account(address=f"{username}@{domain}")
-        except:
-            return self._make_account_request(username=username, domain=domain, retry=retry - 1)
-
-    def get_account(self, retry: int = 3) -> Account:
-        address = self.generate_address(bits=random.randint(6, 12))
-        if not address or retry <= 0:
-            return None
-
-        username, domain = address.split("@", maxsplit=1)
-        return self._make_account_request(username=username, domain=domain, retry=retry)
-
-    def get_messages(self, account: Account) -> list:
-        if not account:
-            return []
-
-        messages = []
-        content = utils.http_get(url=f"{self.api_address}/inbox", headers=self.headers)
-        if not content:
-            return messages
-
-        mails = re.findall(r'<a\s+href="/zh(/email/[a-z0-9\-]+)">', content)
-        if not mails:
-            return messages
-
-        for mail in mails:
-            url = f"{self.api_address}{mail}/content/"
-            content = utils.http_get(url=url, headers=self.headers)
-            if not content:
-                continue
-            messages.append(Message(text=content, html=content))
-        return messages
-
-    def delete_account(self, account: Account) -> bool:
-        if not account:
-            return False
-
-        utils.http_get(url=f"{self.api_address}/inbox/logout", headers=self.headers)
-        return True
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def http_error_302(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+    ) -> IO[bytes]:
+        return fp
 
 def create_instance() -> TemporaryMail:
     return MailTM()
