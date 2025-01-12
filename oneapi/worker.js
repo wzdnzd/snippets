@@ -218,6 +218,26 @@ class ModelProviderSelector {
 
         return this.providers[index];
     }
+
+    switch(last) {
+        if (!this.providers || this.providers.length <= 0) {
+            return null;
+        } else if (this.providers.length == 1) {
+            return this.providers[0];
+        } else {
+            let index = Math.floor(Math.random() * this.providers.length);
+            if (last?.address) {
+                while (last.address === this.providers[index].address && last.token === this.providers[index].token) {
+                    index++;
+                    if (index >= this.providers.length) {
+                        index = 0;
+                    }
+                }
+            }
+
+            return this.providers[index];
+        }
+    }
 }
 
 async function handleRequest(request) {
@@ -378,9 +398,11 @@ async function handleProxy(request) {
     needRemoveHeaders.forEach(key => headers.delete(key));
 
     let response;
+    let provider = null;
+    let invalidFlag = false;
 
     for (let retry = 0; retry < maxRetries; retry++) {
-        const provider = selector.select();
+        provider = invalidFlag ? selector.switch(provider) : selector.select();
         if (!provider) {
             return new Response(JSON.stringify({ message: 'Service is temporarily unavailable', success: false }), {
                 status: 503,
@@ -394,7 +416,7 @@ async function handleProxy(request) {
         const proxyURL = provider.address;
         const accessToken = provider.token;
 
-        console.log(`Selected proxy url: ${proxyURL}`);
+        console.log(`Selected proxy url: ${proxyURL}, token: ${accessToken}`);
 
         headers.set('Referer', proxyURL);
         headers.set('Origin', proxyURL);
@@ -414,30 +436,40 @@ async function handleProxy(request) {
                 body: JSON.stringify(requestBody),
             });
 
-            if (response && response.ok) {
-                break;
-            } else if (response && response.status === 401) {
-                // Flag provider status to dead
-                const text = await KV.get(model);
-                try {
-                    const arrays = JSON.parse(text);
-                    const providers = [];
+            if (response) {
+                if (response.ok) {
+                    break;
+                } else if (response.status === 401) {
+                    invalidFlag = true;
+                    console.warn(`Found expired provider, address: ${proxyURL}, token: ${accessToken}`);
 
-                    for (const item of arrays) {
-                        if (item.address === proxyURL && item.token === accessToken) {
-                            item.alive = invalidStatus;
+                    // Flag provider status to dead
+                    const text = await KV.get(model);
+                    try {
+                        const arrays = JSON.parse(text);
+                        const providers = [];
+
+                        for (const item of arrays) {
+                            if (item.address === proxyURL && item.token === accessToken) {
+                                item.alive = invalidStatus;
+                            }
+
+                            providers.push(item);
                         }
 
-                        providers.push(item);
+                        // Save to KV database
+                        await KV.put(model, JSON.stringify(providers));
+
+                        // Remove cache for reload
+                        providerSelectorCache.remove(key);
+                    } catch {
+                        console.error(`Update provider status failed due to parse config error, model: ${model}, config: ${text}`);
                     }
-
-                    // Save to KV database
-                    await KV.put(model, JSON.stringify(providers));
-
-                    // Remove cache for reload
-                    providerSelectorCache.remove(key);
-                } catch {
-                    console.error(`Update provider status failed due to parse config error, model: ${model}, config: ${text}`);
+                } else if (response.status === 429) {
+                    invalidFlag = true;
+                    console.warn(`Upstream is busy, address: ${proxyURL}, token: ${accessToken}`);
+                } else {
+                    console.warn(`Failed to request, address: ${proxyURL}, token: ${accessToken}, status: ${response.status}`);
                 }
             }
         } catch (error) {
