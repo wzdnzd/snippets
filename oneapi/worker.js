@@ -283,6 +283,7 @@ async function handleRequest(request) {
         const config = await request.json();
         response = await handleProviderUpdate(config);
     } else if (url.pathname === '/v1/provider/reload' && request.method === 'POST') {
+        // TODO: Need to synchronously delete the cache in all instances
         providerSelectorCache.clear();
         response = new Response(JSON.stringify({ message: 'Ok', success: true }), {
             status: 200,
@@ -469,7 +470,7 @@ async function handleProxy(request) {
                     invalidFlag = true;
                     console.warn(`Upstream is busy, address: ${proxyURL}, token: ${accessToken}`);
                 } else {
-                    console.warn(`Failed to request, address: ${proxyURL}, token: ${accessToken}, status: ${response.status}`);
+                    console.error(`Failed to request, address: ${proxyURL}, token: ${accessToken}, status: ${response.status}`);
                 }
             }
         } catch (error) {
