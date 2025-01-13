@@ -300,7 +300,7 @@ async function handleRequest(request) {
 }
 
 async function handleListModels() {
-    // list and return all openai models
+    // List and return all openai models
     return new Response(JSON.stringify({
         "data": await listSupportModels(),
         "object": "list"
@@ -387,7 +387,7 @@ async function handleProxy(request) {
     const isStreamReq = requestBody.stream || false;
     const headers = new Headers(request.headers);
 
-    // add custom headers
+    // Add custom headers
     headers.set('Content-Type', 'application/json');
     headers.set('Path', 'v1/chat/completions');
     headers.set('Accept-Language', 'zh-CN,zh;q=0.9');
@@ -424,7 +424,7 @@ async function handleProxy(request) {
         headers.set('Host', new URL(proxyURL).host);
         headers.set('X-Real-IP', '8.8.8.8');
 
-        // remove old authorization header if exist
+        // Remove old authorization header if exist
         headers.delete('Authorization');
         if (accessToken) {
             headers.set('Authorization', `Bearer ${accessToken}`);
@@ -478,7 +478,7 @@ async function handleProxy(request) {
         }
     }
 
-    // no valid response after retries
+    // No valid response after retries
     if (!response) {
         return new Response(JSON.stringify({ message: 'Internal server error', success: false }), {
             status: 500,
@@ -486,7 +486,7 @@ async function handleProxy(request) {
         });
     }
 
-    // return the original response
+    // Return the original response
     const newHeaders = new Headers(response.headers);
     newHeaders.set('Access-Control-Allow-Origin', '*');
     newHeaders.set('Access-Control-Allow-Methods', '*');
@@ -496,11 +496,10 @@ async function handleProxy(request) {
 
     if (response.status === 200) {
         if (isStreamReq && !contentType.includes('text/event-stream')) {
-            // need text/event-stream but got others
+            // Need text/event-stream but got others
             if (contentType.includes('application/json')) {
                 try {
                     const data = await response.json();
-                    const model = data?.model || requestBody.model || 'gpt-3.5-turbo';
 
                     // 'chatcmpl-'.length = 10
                     const messageId = (data?.id || '').slice(10);
@@ -534,20 +533,27 @@ async function handleProxy(request) {
             } else {
                 const { readable, writable } = new TransformStream();
 
-                // transform chunk data to event-stream
-                streamResponse(response, writable, requestBody.model, generateUUID());
+                // Transform chunk data to event-stream
+                streamResponse(response, writable, model, generateUUID());
                 newBody = readable;
             }
 
             newHeaders.set('Content-Type', 'text/event-stream');
         } else if (!isStreamReq && !contentType.includes('application/json')) {
-            // need application/json
+            // Need application/json
             try {
                 const content = (await response.text())
                     .replace(/^\`\`\`json\n/, "").replace(/\n\`\`\`$/, "");
 
-                // compress json data
-                const text = JSON.stringify(JSON.parse(content));
+                // Compress json data
+                const obj = JSON.parse(content);
+
+                // Replace model name to request model
+                if (obj.hasOwnProperty("choices")) {
+                    obj.model = model;
+                }
+
+                const text = JSON.stringify();
                 newBody = new ReadableStream({
                     start(controller) {
                         controller.enqueue(new TextEncoder().encode(text));
