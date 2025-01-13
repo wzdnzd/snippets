@@ -31,7 +31,11 @@ const invalidStatus = 'dead';
 // Cache key suffix for function call
 const functionCallKeySuffix = "#function";
 
-const CACHE_CONFIG = { TTL: 7 * 24 * 60 * 60 * 1000, MAX_CACHE_SIZE: 10000 };
+const CACHE_CONFIG = {
+    // Unit: ms
+    TTL: 7 * 24 * 60 * 60 * 1000,
+    MAX_CACHE_SIZE: 10000,
+};
 
 class SimpleCache {
     constructor() {
@@ -66,7 +70,7 @@ class SimpleCache {
         if (!timestamp) return null;
 
         // Check whether expired
-        if (Date.now() - timestamp > CACHE_CONFIG.TTL * 1000) {
+        if (Date.now() - timestamp > CACHE_CONFIG.TTL) {
             this.cache.delete(key);
             this.keyTimestamps.delete(key);
             return null;
@@ -76,6 +80,15 @@ class SimpleCache {
     }
 
     has(key) {
+        const timestamp = this.keyTimestamps.get(key);
+        if (!timestamp) return false;
+
+        // Check whether expired
+        if (Date.now() - timestamp > CACHE_CONFIG.TTL) {
+            this.cache.delete(key);
+            this.keyTimestamps.delete(key);
+        }
+
         return this.cache.has(key);
     }
 
