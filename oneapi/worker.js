@@ -37,8 +37,11 @@ const switchNextStatusCodes = new Set([401, 402, 403, 418, 422, 429]);
 // Rate limit status code
 const rateLimitStatusCodes = new Set([418, 429]);
 
+// Maximum Freeze Time, 3 days
+const maxFreezingDuration = 3 * 24 * 60 * 60 * 1000;
+
 const cacheConfig = {
-    // Unit: ms
+    // Unit: ms, 7 days
     TTL: 7 * 24 * 60 * 60 * 1000,
     MAX_CACHE_SIZE: 10000,
 };
@@ -209,11 +212,7 @@ class ModelProviderSelector {
         }
 
         const weights = [];
-        const services = new Set();
-
         providers.forEach(provider => {
-            services.add(provider.address);
-
             let priority = provider.priority;
             if (priority <= 0) {
                 priority = Math.ceil(1 / providers.length * 100);
@@ -228,8 +227,11 @@ class ModelProviderSelector {
         // Candidate service list
         this.providers = providers;
 
-        // Provider addresses
-        this.services = Array.from(services);
+        // Frozen providers
+        this.frozenProviders = new Map();
+
+        // Number of failures
+        this.failures = new Map();
     }
 
     select() {
@@ -242,7 +244,15 @@ class ModelProviderSelector {
             index = Math.floor(Math.random() * this.providers.length);
         }
 
-        return this.providers[index];
+        let provider = this.providers[index];
+        if (this.onHold(provider) && this.frozenProviders.size < this.providers.length) {
+            console.warn(`Skip frozen provider, address: ${provider.address}, token: ${provider.token}`);
+
+            index = (index + 1) % this.providers.length;
+            provider = this.providers[index];
+        }
+
+        return provider;
     }
 
     switch(last, strict) {
@@ -250,20 +260,86 @@ class ModelProviderSelector {
             return null;
         } else if (this.providers.length == 1) {
             return this.providers[0];
-        } else {
-            let index = Math.floor(Math.random() * this.providers.length);
-            if (last?.address) {
-                const condition = strict && this.services.length > 1
-                    ? p => last.address === p.address
-                    : p => last.address === p.address && last.token === p.token;
-
-                while (condition(this.providers[index])) {
-                    index = (index + 1) % this.providers.length;
-                }
-            }
-
+        } else if (!last) {
+            const index = Math.floor(Math.random() * this.providers.length);
             return this.providers[index];
         }
+
+        // Last request failed, need to cool down for a while
+        this.freeze(last);
+
+        // Filtering providers
+        const otherProviders = [];
+        const adequateProviders = [];
+        const unFrozenProviders = [];
+
+        for (const item of this.providers) {
+            if (item.address === last.address && (strict || item.token === last.token)) {
+                if (item.token !== last.token) {
+                    otherProviders.push(item);
+                }
+
+                continue;
+            }
+
+            adequateProviders.push(item);
+            if (!this.onHold(item)) {
+                unFrozenProviders.push(item);
+            }
+        }
+
+        // Priority: not frozen > different service addresses > different tokens
+        if (unFrozenProviders.length > 0) {
+            return unFrozenProviders[Math.floor(Math.random() * unFrozenProviders.length)];
+        } else if (adequateProviders.length > 0) {
+            return adequateProviders[Math.floor(Math.random() * adequateProviders.length)];
+        } else {
+            return otherProviders[Math.floor(Math.random() * otherProviders.length)];
+        }
+    }
+
+    getNextFreezeDuration(provider) {
+        if (!provider) return 0;
+
+        const key = provider.valueOf();
+        let count = this.failures.get(key);
+        if (!count || count < 0) count = 0;
+
+        count++;
+        this.failures.set(key, count);
+
+        const duration = Math.pow(2, count);
+        return Math.min(duration, maxFreezingDuration);
+    }
+
+    freeze(provider) {
+        if (!provider) return;
+
+        const current = Date.now();
+        const key = provider.valueOf();
+
+        let base = this.frozenProviders.get(key);
+        if (!base || base < current) {
+            base = current;
+        }
+
+        this.frozenProviders.set(key, base + this.getNextFreezeDuration(provider));
+    }
+
+    unfreeze(provider) {
+        if (!provider) return;
+
+        const key = provider.valueOf();
+        this.frozenProviders.delete(key);
+        this.failures.delete(key);
+    }
+
+    onHold(provider) {
+        if (!provider) false;
+        const key = provider.valueOf();
+
+        const timestamp = this.frozenProviders.get(key);
+        return !timestamp ? false : timestamp > Date.now();
     }
 }
 
@@ -527,6 +603,9 @@ async function handleProxy(request) {
     const contentType = response.headers.get('Content-Type') || '';
 
     if (response.status === 200) {
+        // Request succeeded, no cooldown
+        selector.unfreeze(provider);
+
         if (isStreamReq && !contentType.includes('text/event-stream')) {
             // Need text/event-stream but got others
             if (contentType.includes('application/json')) {
