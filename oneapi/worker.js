@@ -31,7 +31,13 @@ const invalidStatus = 'dead';
 // Cache key suffix for function call
 const functionCallKeySuffix = "#function";
 
-const CACHE_CONFIG = {
+// Error http status code
+const switchNextStatusCodes = new Set([401, 402, 403, 418, 422, 429]);
+
+// Rate limit status code
+const rateLimitStatusCodes = new Set([418, 429]);
+
+const cacheConfig = {
     // Unit: ms
     TTL: 7 * 24 * 60 * 60 * 1000,
     MAX_CACHE_SIZE: 10000,
@@ -52,7 +58,7 @@ class SimpleCache {
 
     set(key, value) {
         // Check cache size
-        if (this.cache.size >= CACHE_CONFIG.MAX_CACHE_SIZE) {
+        if (this.cache.size >= cacheConfig.MAX_CACHE_SIZE) {
             // Delete oldest item
             const oldestKey = [...this.keyTimestamps.entries()].sort(
                 ([, a], [, b]) => a - b
@@ -70,7 +76,7 @@ class SimpleCache {
         if (!timestamp) return null;
 
         // Check whether expired
-        if (Date.now() - timestamp > CACHE_CONFIG.TTL) {
+        if (Date.now() - timestamp > cacheConfig.TTL) {
             this.cache.delete(key);
             this.keyTimestamps.delete(key);
             return null;
@@ -84,7 +90,7 @@ class SimpleCache {
         if (!timestamp) return false;
 
         // Check whether expired
-        if (Date.now() - timestamp > CACHE_CONFIG.TTL) {
+        if (Date.now() - timestamp > cacheConfig.TTL) {
             this.cache.delete(key);
             this.keyTimestamps.delete(key);
         }
@@ -203,7 +209,11 @@ class ModelProviderSelector {
         }
 
         const weights = [];
+        const services = new Set();
+
         providers.forEach(provider => {
+            services.add(provider.address);
+
             let priority = provider.priority;
             if (priority <= 0) {
                 priority = Math.ceil(1 / providers.length * 100);
@@ -217,6 +227,9 @@ class ModelProviderSelector {
 
         // Candidate service list
         this.providers = providers;
+
+        // Provider addresses
+        this.services = Array.from(services);
     }
 
     select() {
@@ -232,7 +245,7 @@ class ModelProviderSelector {
         return this.providers[index];
     }
 
-    switch(last) {
+    switch(last, strict) {
         if (!this.providers || this.providers.length <= 0) {
             return null;
         } else if (this.providers.length == 1) {
@@ -240,11 +253,12 @@ class ModelProviderSelector {
         } else {
             let index = Math.floor(Math.random() * this.providers.length);
             if (last?.address) {
-                while (last.address === this.providers[index].address && last.token === this.providers[index].token) {
-                    index++;
-                    if (index >= this.providers.length) {
-                        index = 0;
-                    }
+                const condition = strict && this.services.length > 1
+                    ? p => last.address === p.address
+                    : p => last.address === p.address && last.token === p.token;
+
+                while (condition(this.providers[index])) {
+                    index = (index + 1) % this.providers.length;
                 }
             }
 
@@ -414,9 +428,10 @@ async function handleProxy(request) {
     let response;
     let provider = null;
     let invalidFlag = false;
+    let internalErrorFlag = false;
 
     for (let retry = 0; retry < maxRetries; retry++) {
-        provider = invalidFlag ? selector.switch(provider) : selector.select();
+        provider = invalidFlag ? selector.switch(provider, internalErrorFlag) : selector.select();
         if (!provider) {
             return new Response(JSON.stringify({ message: 'Service is temporarily unavailable', success: false }), {
                 status: 503,
@@ -451,10 +466,15 @@ async function handleProxy(request) {
             });
 
             if (response) {
+                // Need switch to next provider
+                invalidFlag = switchNextStatusCodes.has(response.status);
+
+                // There might be a problem with the service, switch to the next service directly
+                internalErrorFlag = response.status >= 500;
+
                 if (response.ok) {
                     break;
                 } else if (response.status === 401) {
-                    invalidFlag = true;
                     console.warn(`Found expired provider, address: ${proxyURL}, token: ${accessToken}`);
 
                     // Flag provider status to dead
@@ -479,8 +499,7 @@ async function handleProxy(request) {
                     } catch {
                         console.error(`Update provider status failed due to parse config error, model: ${model}, config: ${text}`);
                     }
-                } else if (response.status === 429) {
-                    invalidFlag = true;
+                } else if (rateLimitStatusCodes.has(response.status)) {
                     console.warn(`Upstream is busy, address: ${proxyURL}, token: ${accessToken}`);
                 } else {
                     console.error(`Failed to request, address: ${proxyURL}, token: ${accessToken}, status: ${response.status}`);
