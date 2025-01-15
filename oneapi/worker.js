@@ -21,7 +21,7 @@ addEventListener('fetch', event => {
 });
 
 const KV = database;
-const maxRetries = 3;
+const maxRetries = 5;
 const defaultModel = (DEFAULT_MODEL || 'gpt-4o').trim();
 const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 
@@ -234,51 +234,58 @@ class ModelProviderSelector {
         this.failures = new Map();
     }
 
-    select() {
-        if (!this.providers || this.providers.length <= 0) {
+    select(last, strict) {
+        if (!this.providers?.length) {
             return null;
-        }
-
-        let index = this.sampler.sample();
-        if (index >= this.providers.length) {
-            index = Math.floor(Math.random() * this.providers.length);
-        }
-
-        let provider = this.providers[index];
-        if (this.onHold(provider) && this.frozenProviders.size < this.providers.length) {
-            console.warn(`Skip frozen provider, address: ${provider.address}, token: ${provider.token}`);
-
-            index = (index + 1) % this.providers.length;
-            provider = this.providers[index];
-        }
-
-        return provider;
-    }
-
-    switch(last, strict) {
-        if (!this.providers || this.providers.length <= 0) {
-            return null;
-        } else if (this.providers.length == 1) {
+        } else if (this.providers.length === 1) {
             return this.providers[0];
-        } else if (!last) {
-            const index = Math.floor(Math.random() * this.providers.length);
-            return this.providers[index];
         }
+
+        const startTime = Date.now();
 
         // Last request failed, need to cool down for a while
         this.freeze(last);
 
-        // Filtering providers
+        let provider = this.providers[this.sampler.sample()];
+        const isSame = this.isSameProvider(last, provider, strict);
+        const cooling = this.onHold(provider);
+
+        if (isSame) {
+            console.log(`The result of sampling is consistent with the provider which was failed in last request, try to downgraded and switch, selected: ${provider.valueOf()}, last: ${last.valueOf()}, strict: ${strict}`);
+            provider = this.selectAlternativeProvider(last, strict);
+        } else if (cooling) {
+            const timestamp = this.frozenProviders.get(provider.valueOf());
+            const releaseTime = new Date(timestamp).toLocaleString('zh-CN', {
+                timeZone: 'Asia/Shanghai',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            });
+            console.info(`The result of sampling has been frozen, address: ${provider.address}, token: ${provider.token}, release: ${releaseTime}`);
+            provider = this.selectUnfrozenProvider(last, strict) || provider;
+        }
+
+        const text = last ? last.valueOf() : "null";
+        const cost = Date.now() - startTime;
+        console.log(`Selection finished, address: ${provider.address}, token: ${provider.token}, frozen: ${this.onHold(provider)}, last: ${text}, cost: ${cost}ms`);
+
+        return provider;
+    }
+
+    selectAlternativeProvider(last, strict) {
         const otherProviders = [];
         const adequateProviders = [];
         const unFrozenProviders = [];
 
         for (const item of this.providers) {
-            if (item.address === last.address && (strict || item.token === last.token)) {
-                if (item.token !== last.token) {
+            if (item.address === last?.address && (strict || item.token === last?.token)) {
+                if (item.token !== last?.token) {
                     otherProviders.push(item);
                 }
-
                 continue;
             }
 
@@ -289,13 +296,52 @@ class ModelProviderSelector {
         }
 
         // Priority: not frozen > different service addresses > different tokens
-        if (unFrozenProviders.length > 0) {
-            return unFrozenProviders[Math.floor(Math.random() * unFrozenProviders.length)];
-        } else if (adequateProviders.length > 0) {
-            return adequateProviders[Math.floor(Math.random() * adequateProviders.length)];
-        } else {
-            return otherProviders[Math.floor(Math.random() * otherProviders.length)];
+        const availableProviders = unFrozenProviders.length > 0 ? unFrozenProviders :
+            adequateProviders.length > 0 ? adequateProviders : otherProviders;
+
+        return this.randomSelect(availableProviders);
+    }
+
+    selectUnfrozenProvider(last, strict) {
+        const hasUnfrozenProvider = this.frozenProviders.size < this.providers.length;
+        if (!hasUnfrozenProvider) {
+            return null;
         }
+
+        if (!last) {
+            let index = this.sampler.sample();
+            let provider = this.providers[index];
+
+            while (this.onHold(provider)) {
+                console.warn(`Skip frozen provider, address: ${provider.address}, token: ${provider.token}`);
+                index = (index + 1) % this.providers.length;
+                provider = this.providers[index];
+            }
+
+            return provider;
+        }
+
+        const unFrozenProviders = this.providers.filter(item =>
+            !(this.isSameProvider(last, item, strict) || this.onHold(item))
+        );
+
+        return unFrozenProviders.length > 0 ? this.randomSelect(unFrozenProviders) : null;
+    }
+
+    randomSelect(providers) {
+        if (!providers || providers.length <= 0)
+            return null;
+
+        return providers[Math.floor(Math.random() * providers.length)];
+    }
+
+    isSameProvider(last, provider, strict) {
+        if (last === provider || (!last && !provider))
+            return true;
+        else if (!last || !provider)
+            return false;
+
+        return provider.address === last.address && (strict || provider.token === last.token);
     }
 
     getNextFreezeDuration(provider) {
@@ -308,7 +354,7 @@ class ModelProviderSelector {
         count++;
         this.failures.set(key, count);
 
-        const duration = Math.pow(2, count);
+        const duration = Math.pow(2, count) * 1000;
         return Math.min(duration, maxFreezingDuration);
     }
 
@@ -507,7 +553,7 @@ async function handleProxy(request) {
     let internalErrorFlag = false;
 
     for (let retry = 0; retry < maxRetries; retry++) {
-        provider = invalidFlag ? selector.switch(provider, internalErrorFlag) : selector.select();
+        provider = selector.select(invalidFlag ? provider : null, internalErrorFlag);
         if (!provider) {
             return new Response(JSON.stringify({ message: 'Service is temporarily unavailable', success: false }), {
                 status: 503,
@@ -520,8 +566,6 @@ async function handleProxy(request) {
 
         const proxyURL = provider.address;
         const accessToken = provider.token;
-
-        console.log(`Selected proxy url: ${proxyURL}, token: ${accessToken}`);
 
         headers.set('Referer', proxyURL);
         headers.set('Origin', proxyURL);
@@ -542,11 +586,11 @@ async function handleProxy(request) {
             });
 
             if (response) {
-                // Need switch to next provider
-                invalidFlag = switchNextStatusCodes.has(response.status);
-
                 // There might be a problem with the service, switch to the next service directly
                 internalErrorFlag = response.status >= 500;
+
+                // Need switch to next provider
+                invalidFlag = internalErrorFlag || switchNextStatusCodes.has(response.status);
 
                 if (response.ok) {
                     break;
@@ -580,8 +624,11 @@ async function handleProxy(request) {
                 } else {
                     console.error(`Failed to request, address: ${proxyURL}, token: ${accessToken}, status: ${response.status}`);
                 }
+            } else {
+                invalidFlag = true;
             }
         } catch (error) {
+            invalidFlag = true;
             console.error(`Error during fetch with ${proxyURL}: `, error);
         }
     }
