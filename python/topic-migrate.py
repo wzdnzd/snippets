@@ -5,6 +5,7 @@
 
 import argparse
 import json
+import logging
 import os
 import time
 import traceback
@@ -12,6 +13,12 @@ import uuid
 from datetime import datetime, timezone
 
 PATH = os.path.abspath(os.path.dirname(__file__))
+
+logging.basicConfig(
+    format="%(asctime)s %(filename)s [line:%(lineno)d] %(levelname)s: %(message)s",
+    level=logging.INFO,
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 
 def trim(text: str) -> str:
@@ -30,11 +37,11 @@ def main(nextchat: str, cherrystudio: str, result: str = "") -> None:
     result = os.path.abspath(os.path.join(PATH, (trim(result) or "migrated.json")))
 
     if not os.path.exists(nextchat) or not os.path.isfile(nextchat):
-        print("nextchat chat history file not exist")
+        logging.error("nextchat chat history file not exist")
         return
 
     if not os.path.exists(cherrystudio) or not os.path.isfile(cherrystudio):
-        print("cherry studio data file not exist")
+        logging.error("cherry studio data file not exist")
         return
 
     try:
@@ -47,7 +54,7 @@ def main(nextchat: str, cherrystudio: str, result: str = "") -> None:
                     sessions = []
 
         if not sessions:
-            print(f"skip migrate due to nextchat not exist any history")
+            logging.error(f"skip migrate due to nextchat not exist any history")
             return
 
         topics, topics_summary, data = [], [], None
@@ -56,7 +63,7 @@ def main(nextchat: str, cherrystudio: str, result: str = "") -> None:
         with open(cherrystudio, "r", encoding="utf8") as f:
             data = json.loads(f.read())
             if not isinstance(data, dict):
-                print(f"invalid cherry studio data file: ${cherrystudio}")
+                logging.error(f"invalid cherry studio data file: ${cherrystudio}")
                 return
 
             # load exists topics
@@ -69,7 +76,7 @@ def main(nextchat: str, cherrystudio: str, result: str = "") -> None:
             # load exists topics summary
             local_storage = data.get("localStorage", None)
             if not isinstance(local_storage, dict):
-                print(f"skip migrate due to localStorage data missing for cherry studio")
+                logging.error(f"skip migrate due to localStorage data missing for cherry studio")
                 return
 
             content = local_storage.get(persist_key_name, "")
@@ -77,23 +84,23 @@ def main(nextchat: str, cherrystudio: str, result: str = "") -> None:
                 old_summary = json.loads(content)
                 tools = json.loads(old_summary.get("assistants", ""))
                 if not isinstance(tools, dict):
-                    print(f"skip migrate due to assistants config missing")
+                    logging.error(f"skip migrate due to assistants config missing")
                     return
 
                 assistants = tools.get("assistants", [])
                 if not assistants or not isinstance(assistants, list):
-                    print(f"skip migrate due to assistants list is empty")
+                    logging.error(f"skip migrate due to assistants list is empty")
                     return
 
                 default_assistant = assistants[0]
                 if not isinstance(default_assistant, dict):
-                    print(f"skip migrate due to cannot extract assistant id")
+                    logging.error(f"skip migrate due to cannot extract assistant id")
                     return
 
                 assistant_id = default_assistant.get("id", None)
                 topics_summary = default_assistant.get("topics", [])
             except:
-                print(f"failed to parse cherry studio persist, content: {content}")
+                logging.error(f"failed to parse cherry studio persist, content: {content}")
                 return
 
         if not assistant_id:
@@ -115,7 +122,7 @@ def main(nextchat: str, cherrystudio: str, result: str = "") -> None:
 
             messages = session.get("messages", [])
             if not isinstance(messages, list):
-                print(f"A topic with an empty message list has been ignored")
+                logging.error(f"A topic with an empty message list has been ignored")
                 continue
 
             topic_id = str(uuid.uuid4()).lower()
@@ -127,7 +134,7 @@ def main(nextchat: str, cherrystudio: str, result: str = "") -> None:
 
             key = generate_key(topic_name, updated_at, assistant_id)
             if key in records:
-                print(f"topic {topic_name} already in assistant {assistant_id} chat histories, ignore it")
+                logging.error(f"topic {topic_name} already in assistant {assistant_id} chat histories, ignore it")
                 continue
 
             converted_messages = list()
@@ -173,7 +180,7 @@ def main(nextchat: str, cherrystudio: str, result: str = "") -> None:
                 added = added or True
 
         if not added:
-            print(f"No new data added, skip migrate, nextchat: {nextchat}, cherry-studio: {cherrystudio}")
+            logging.error(f"No new data added, skip migrate, nextchat: {nextchat}, cherry-studio: {cherrystudio}")
             return
 
         directory = os.path.dirname(result)
@@ -199,7 +206,7 @@ def main(nextchat: str, cherrystudio: str, result: str = "") -> None:
         with open(result, "w+", encoding="utf8") as f:
             json.dump(data, f, ensure_ascii=False)
 
-        print(f"migrate finished, result file: {result}")
+        logging.info(f"migrate finished, result file: {result}")
     except:
         traceback.print_exc()
 
