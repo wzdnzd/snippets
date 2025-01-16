@@ -46,6 +46,19 @@ const cacheConfig = {
     MAX_CACHE_SIZE: 10000,
 };
 
+// Default request paths for different types of models
+const defaultRequestPath = {
+    "completion": "/v1/chat/completions",
+    "embedding": "/v1/embeddings",
+    "speech": "/v1/audio/speech",
+    "transcription": "/v1/audio/transcriptions",
+    "translation": "/v1/audio/translations",
+    "imageGeneration": "/v1/images/generations",
+    "imageEdit": "/v1/images/edits",
+    "imageVariation": "/v1/images/variations",
+    "moderation": "/v1/moderations",
+};
+
 class SimpleCache {
     constructor() {
         this.cache = new Map();
@@ -402,22 +415,16 @@ async function handleRequest(request) {
 
     const accessToken = request.headers.get('Authorization');
     if (!accessToken || !accessToken.startsWith('Bearer ')) {
-        return new Response(JSON.stringify({ message: 'Unauthorized', success: false }), {
-            status: 401,
-            headers: { 'Content-Type': 'application/json' }
-        });
+        return createErrorResponse('Unauthorized', 401);
     }
 
     const authToken = accessToken.substring(7).trim();
     const url = new URL(request.url);
 
-    if (['/v1/models', '/v1/chat/completions'].includes(url.pathname) && authToken !== (SECRET_KEY || '')
+    if (['/v1/models', '/v1/chat/completions', '/v1/embeddings'].includes(url.pathname) && authToken !== (SECRET_KEY || '')
         || ['/v1/provider/list', '/v1/provider/update', '/v1/provider/reload'].includes(url.pathname)
         && authToken !== (ADMIN_AUTH_TOKEN || '')) {
-        return new Response(JSON.stringify({ message: 'Unauthorized', success: false }), {
-            status: 401,
-            headers: { 'Content-Type': 'application/json' }
-        });
+        return createErrorResponse('Unauthorized', 401);
     }
 
 
@@ -425,7 +432,9 @@ async function handleRequest(request) {
     if (url.pathname === '/v1/models' && request.method === 'GET') {
         response = await handleListModels();
     } else if (url.pathname === '/v1/chat/completions' && request.method === 'POST') {
-        response = await handleProxy(request);
+        response = await handleCompletion(request);
+    } else if (url.pathname === '/v1/embeddings' && request.method === 'POST') {
+        response = await handleEmbedding(request);
     } else if (url.pathname === '/v1/provider/list' && request.method === 'GET') {
         response = await handleProviderList();
     } else if (url.pathname === '/v1/provider/update' && request.method === 'PUT') {
@@ -450,25 +459,25 @@ async function handleRequest(request) {
 
 async function handleListModels() {
     // List and return all openai models
+    const headers = new Headers({ 'Content-Type': 'application/json' });
+    setCORSHeaders(headers);
+
     return new Response(JSON.stringify({
         "data": await listSupportModels(),
         "object": "list"
     }), {
-        status: 200, headers: {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Headers': '*',
-            'Content-Type': 'application/json',
-        }
+        status: 200,
+        headers: headers
     });
 }
 
 async function handleProviderList() {
+    const headers = new Headers({ 'Content-Type': 'application/json' });
+    setCORSHeaders(headers);
+
     return new Response(JSON.stringify(await listAllProviders()), {
-        status: 200, headers: {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Headers': '*',
-            'Content-Type': 'application/json',
-        }
+        status: 200,
+        headers: headers
     });
 }
 
@@ -490,23 +499,89 @@ async function listAllProviders() {
     return data;
 }
 
-async function handleProxy(request) {
-    const requestBody = await request.json();
-    const model = (requestBody.model || defaultModel).trim();
-    if (!model) {
-        return new Response(JSON.stringify({ message: 'Model name cannot be empty', success: false }), {
-            status: 400,
-            headers: { 'Content-Type': 'application/json' }
-        });
+/**
+ * Create error response with given message and status code
+ */
+function createErrorResponse(message, status = 400) {
+    return new Response(JSON.stringify({ message, success: false }), {
+        status,
+        headers: { 'Content-Type': 'application/json' }
+    });
+}
+
+/**
+ * Set common headers for requests
+ */
+function setCommonHeaders(headers, isStream = false) {
+    headers.set('Content-Type', 'application/json');
+    headers.set('Accept-Language', 'zh-CN,zh;q=0.9');
+    headers.set('Accept-Encoding', 'gzip, deflate, br, zstd');
+    headers.set('Accept', isStream ? 'application/json, text/event-stream' : 'application/json');
+    headers.set('User-Agent', userAgent);
+
+    const needRemoveHeaders = ['x-forwarded-for', 'CF-Connecting-IP', 'CF-IPCountry', 'CF-Visitor', 'CF-Ray', 'CF-Worker', 'CF-Device-Type'];
+    needRemoveHeaders.forEach(key => headers.delete(key));
+}
+
+/**
+ * Set provider-specific headers
+ */
+function setProviderHeaders(headers, proxyURL, accessToken) {
+    headers.set('Referer', proxyURL);
+    headers.set('Origin', proxyURL);
+    headers.set('Host', new URL(proxyURL).host);
+    headers.set('X-Real-IP', '8.8.8.8');
+
+    headers.delete('Authorization');
+    if (accessToken) {
+        headers.set('Authorization', `Bearer ${accessToken}`);
     }
+}
+
+/**
+ * Set cross-origin headers
+ */
+function setCORSHeaders(headers) {
+    headers.set('Access-Control-Allow-Origin', '*');
+    headers.set('Access-Control-Allow-Methods', '*');
+    headers.set('Access-Control-Allow-Headers', '*');
+}
+
+/**
+ * Handle expired provider by updating KV store
+ */
+async function handleExpiredProvider(model, proxyURL, accessToken) {
+    const text = await KV.get(model);
+    try {
+        const arrays = JSON.parse(text);
+        const providers = arrays.map(item => {
+            if (item.address === proxyURL && item.token === accessToken) {
+                item.alive = invalidStatus;
+            }
+
+            return item;
+        });
+
+        // Save to KV database
+        await KV.put(model, JSON.stringify(providers));
+
+        // Remove cache for reload
+        providerSelectorCache.remove(model);
+    } catch {
+        console.error(`Update provider status failed due to parse config error, model: ${model}, config: ${text}`);
+    }
+}
+
+/**
+ * Initialize provider selector for a model
+ */
+async function initializeSelector(model, functionCall = false) {
+    const functionEnabledKey = providerSelectorCache.generateKey(model, true);
 
     if (!providerSelectorCache.has(model)) {
         const config = await KV.get(model);
         if (!config) {
-            return new Response(JSON.stringify({ message: `Not support model '${model}'`, success: false }), {
-                status: 400,
-                headers: { 'Content-Type': 'application/json' }
-            });
+            return null;
         }
 
         const obj = await createModelProviderSelector(model);
@@ -514,39 +589,155 @@ async function handleProxy(request) {
         const functionCallSelector = obj?.functionEnabledSelector;
 
         providerSelectorCache.set(model, commonSelector);
-        providerSelectorCache.set(providerSelectorCache.generateKey(model, true), functionCallSelector);
+        providerSelectorCache.set(functionEnabledKey, functionCallSelector);
     }
 
-    const functionCall = isNotEmptyObject(requestBody.tools) || isNotEmptyObject(requestBody.features);
-    const key = providerSelectorCache.generateKey(model, functionCall);
+    const key = functionCall ? functionEnabledKey : model;
+    return providerSelectorCache.get(key);
+}
 
-    const selector = providerSelectorCache.get(key);
-    if (!selector) {
-        let message = `Not found any valid provider for model '${model}'`;
-        if (functionCall) {
-            message = `Not found any model '${model}' support function call`;
+/**
+ * Make request to provider with retry mechanism
+ */
+async function sendRequest(headers, url, requestBody, method = 'POST') {
+    try {
+        return await fetch(url, {
+            method: method || 'POST',
+            headers: headers,
+            body: JSON.stringify(requestBody),
+        });
+    } catch (error) {
+        console.error(`Error during fetch with ${url}: `, error);
+        return null;
+    }
+}
+
+/**
+ * Process response based on content type and stream requirement
+ */
+async function processResponse(response, isStreamReq, model) {
+    if (!response) {
+        return createErrorResponse('No response from server', 500);
+    } else if (response.status !== 200) {
+        return response;
+    }
+
+    const newHeaders = new Headers(response.headers);
+    setCORSHeaders(newHeaders);
+
+    let newBody = response.body;
+    const contentType = response.headers.get('Content-Type') || '';
+
+    if (isStreamReq && !contentType.includes('text/event-stream')) {
+        // Need text/event-stream but got others
+        if (contentType.includes('application/json')) {
+            try {
+                const data = await response.json();
+
+                // 'chatcmpl-'.length = 10
+                const messageId = (data?.id || '').slice(10);
+
+                const choices = data?.choices
+                if (!choices || choices.length === 0) {
+                    return createErrorResponse('No effective response', 503);
+                }
+
+                const record = choices[0].message || {};
+                const message = record?.content || '';
+                const content = transformToJSON(message, model, messageId);
+                const text = `data: ${content}\n\ndata: [Done]`;
+
+                newBody = new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(new TextEncoder().encode(text));
+                        controller.close();
+                    }
+                });
+
+            } catch (error) {
+                console.error(`Parse response error: `, error);
+                return createErrorResponse('Internal server error', 500);
+            }
+        } else {
+            const { readable, writable } = new TransformStream();
+
+            // Transform chunk data to event-stream
+            streamResponse(response, writable, model, generateUUID());
+            newBody = readable;
         }
 
-        return new Response(JSON.stringify({ message: message, success: false }), {
-            status: 400,
-            headers: { 'Content-Type': 'application/json' }
-        });
+        newHeaders.set('Content-Type', 'text/event-stream');
+    } else if (!isStreamReq && !contentType.includes('application/json')) {
+        // Need application/json
+        try {
+            const content = (await response.text())
+                .replace(/^\`\`\`json\n/, "").replace(/\n\`\`\`$/, "");
+
+            // Compress json data
+            const obj = JSON.parse(content);
+
+            // Replace model name to request model
+            if (obj.hasOwnProperty("choices")) {
+                obj.model = model;
+            }
+
+            const text = JSON.stringify();
+            newBody = new ReadableStream({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode(text));
+                    controller.close();
+                }
+            });
+
+            newHeaders.set('Content-Type', 'application/json');
+        } catch (error) {
+            console.error(`Parse response error: `, error);
+            return createErrorResponse('Internal server error', 500);
+        }
     }
 
-    const isStreamReq = requestBody.stream || false;
-    const headers = new Headers(request.headers);
+    return new Response(newBody, {
+        ...response,
+        headers: newHeaders
+    });
+}
 
-    // Add custom headers
-    headers.set('Content-Type', 'application/json');
-    headers.set('Path', 'v1/chat/completions');
-    headers.set('Accept-Language', 'zh-CN,zh;q=0.9');
-    headers.set('Accept-Encoding', 'gzip, deflate, br, zstd');
-    headers.set('Accept', 'application/json, text/event-stream');
-    headers.set('User-Agent', userAgent);
+/**
+ * Generic request handler for both completion and embedding
+ */
+async function handleProxyRequest(body, headers, options = {}, method = 'POST') {
+    // Validate request
+    if (!isNotEmptyObject(body)) {
+        return createErrorResponse('Invalid request, body cannot be empty');
+    }
 
-    const needRemoveHeaders = ['x-forwarded-for', 'CF-Connecting-IP', 'CF-IPCountry', 'CF-Visitor', 'CF-Ray', 'CF-Worker', 'CF-Device-Type'];
-    needRemoveHeaders.forEach(key => headers.delete(key));
+    const model = (body.model || '').trim();
+    if (!model) {
+        return createErrorResponse('Model name cannot be empty');
+    }
 
+    // Initialize selector
+    const isChatCompletion = options?.isChatCompletion === true;
+    const functionCall = isChatCompletion &&
+        (isNotEmptyObject(body.tools) || isNotEmptyObject(body.features));
+
+    const selector = await initializeSelector(model, functionCall);
+    if (!selector) {
+        const message = functionCall ? `Not found any model '${model}' support function call` : `Not support model '${model}'`
+        return createErrorResponse(message);
+    }
+
+    // Prepare request
+    const isStreamReq = isChatCompletion && (body.stream || false);
+
+    headers = !headers ? {} : headers;
+    setCommonHeaders(headers, isStreamReq);
+    if (isChatCompletion) {
+        // Compatible with nextchat API
+        headers.set('Path', 'v1/chat/completions');
+    }
+
+    // Make request with retry
     let response;
     let provider = null;
     let invalidFlag = false;
@@ -555,222 +746,133 @@ async function handleProxy(request) {
     for (let retry = 0; retry < maxRetries; retry++) {
         provider = selector.select(invalidFlag ? provider : null, internalErrorFlag);
         if (!provider) {
-            return new Response(JSON.stringify({ message: 'Service is temporarily unavailable', success: false }), {
-                status: 503,
-                headers: { 'Content-Type': 'application/json' }
-            });
+            return createErrorResponse('Service is temporarily unavailable', 503);
         }
 
-        requestBody.model = provider.realModel;
-        requestBody.stream = isStreamReq && provider.streamEnabled;
-
-        const proxyURL = provider.address;
+        const url = provider.address;
         const accessToken = provider.token;
 
-        headers.set('Referer', proxyURL);
-        headers.set('Origin', proxyURL);
-        headers.set('Host', new URL(proxyURL).host);
-        headers.set('X-Real-IP', '8.8.8.8');
-
-        // Remove old authorization header if exist
-        headers.delete('Authorization');
-        if (accessToken) {
-            headers.set('Authorization', `Bearer ${accessToken}`);
+        // Update request body
+        body.model = provider.realModel;
+        if (isChatCompletion) {
+            body.stream = isStreamReq && provider.streamEnabled;
         }
 
-        try {
-            response = await fetch(proxyURL, {
-                method: 'POST',
-                headers: headers,
-                body: JSON.stringify(requestBody),
-            });
+        setProviderHeaders(headers, url, accessToken);
+        response = await sendRequest(headers, url, body, method);
 
-            if (response) {
-                // There might be a problem with the service, switch to the next service directly
-                internalErrorFlag = response.status >= 500;
+        if (response) {
+            // There might be a problem with the service, switch to the next service directly
+            internalErrorFlag = response.status >= 500;
 
-                // Need switch to next provider
-                invalidFlag = internalErrorFlag || switchNextStatusCodes.has(response.status);
+            // Need switch to next provider
+            invalidFlag = internalErrorFlag || switchNextStatusCodes.has(response.status);
 
-                if (response.ok) {
-                    break;
-                } else if (response.status === 401) {
-                    console.warn(`Found expired provider, address: ${proxyURL}, token: ${accessToken}`);
+            if (response.status === 200) {
+                // Request successed, no cooldown
+                selector.unfreeze(provider);
 
-                    // Flag provider status to dead
-                    const text = await KV.get(model);
-                    try {
-                        const arrays = JSON.parse(text);
-                        const providers = [];
+                break;
+            } else if (response.status === 401) {
+                console.warn(`Found expired provider, address: ${url}, token: ${accessToken}`);
 
-                        for (const item of arrays) {
-                            if (item.address === proxyURL && item.token === accessToken) {
-                                item.alive = invalidStatus;
-                            }
-
-                            providers.push(item);
-                        }
-
-                        // Save to KV database
-                        await KV.put(model, JSON.stringify(providers));
-
-                        // Remove cache for reload
-                        providerSelectorCache.remove(key);
-                    } catch {
-                        console.error(`Update provider status failed due to parse config error, model: ${model}, config: ${text}`);
-                    }
-                } else if (rateLimitStatusCodes.has(response.status)) {
-                    console.warn(`Upstream is busy, address: ${proxyURL}, token: ${accessToken}`);
-                } else {
-                    console.error(`Failed to request, address: ${proxyURL}, token: ${accessToken}, status: ${response.status}`);
-                }
+                // Flag provider status to dead
+                await handleExpiredProvider(model, url, accessToken);
+            } else if (rateLimitStatusCodes.has(response.status)) {
+                console.warn(`Upstream is busy, address: ${url}, token: ${accessToken}`);
             } else {
-                invalidFlag = true;
+                console.error(`Failed to request, address: ${url}, token: ${accessToken}, status: ${response.status}`);
             }
-        } catch (error) {
+        } else {
             invalidFlag = true;
-            console.error(`Error during fetch with ${proxyURL}: `, error);
         }
     }
 
-    // No valid response after retries
     if (!response) {
-        return new Response(JSON.stringify({ message: 'Internal server error', success: false }), {
-            status: 500,
-            headers: { 'Content-Type': 'application/json' }
-        });
+        response = createErrorResponse('Internal server error', 500);
     }
 
-    // Return the original response
-    const newHeaders = new Headers(response.headers);
-    newHeaders.set('Access-Control-Allow-Origin', '*');
-    newHeaders.set('Access-Control-Allow-Methods', '*');
-
-    let newBody = response.body;
-    const contentType = response.headers.get('Content-Type') || '';
-
-    if (response.status === 200) {
-        // Request succeeded, no cooldown
-        selector.unfreeze(provider);
-
-        if (isStreamReq && !contentType.includes('text/event-stream')) {
-            // Need text/event-stream but got others
-            if (contentType.includes('application/json')) {
-                try {
-                    const data = await response.json();
-
-                    // 'chatcmpl-'.length = 10
-                    const messageId = (data?.id || '').slice(10);
-
-                    const choices = data?.choices
-                    if (!choices || choices.length === 0) {
-                        return new Response(JSON.stringify({ message: 'No effective response', success: false }), {
-                            status: 503,
-                            headers: { 'Content-Type': 'application/json' }
-                        });
-                    }
-
-                    const record = choices[0].message || {};
-                    const message = record?.content || '';
-                    const content = transformToJSON(message, model, messageId);
-                    const text = `data: ${content}\n\ndata: [Done]`;
-
-                    newBody = new ReadableStream({
-                        start(controller) {
-                            controller.enqueue(new TextEncoder().encode(text));
-                            controller.close();
-                        }
-                    });
-
-                } catch (error) {
-                    return new Response(JSON.stringify({ message: 'Internal server error', success: false }), {
-                        status: 500,
-                        headers: { 'Content-Type': 'application/json' }
-                    });
-                }
-            } else {
-                const { readable, writable } = new TransformStream();
-
-                // Transform chunk data to event-stream
-                streamResponse(response, writable, model, generateUUID());
-                newBody = readable;
-            }
-
-            newHeaders.set('Content-Type', 'text/event-stream');
-        } else if (!isStreamReq && !contentType.includes('application/json')) {
-            // Need application/json
-            try {
-                const content = (await response.text())
-                    .replace(/^\`\`\`json\n/, "").replace(/\n\`\`\`$/, "");
-
-                // Compress json data
-                const obj = JSON.parse(content);
-
-                // Replace model name to request model
-                if (obj.hasOwnProperty("choices")) {
-                    obj.model = model;
-                }
-
-                const text = JSON.stringify();
-                newBody = new ReadableStream({
-                    start(controller) {
-                        controller.enqueue(new TextEncoder().encode(text));
-                        controller.close();
-                    }
-                });
-
-                newHeaders.set('Content-Type', 'application/json');
-            } catch (error) {
-                return new Response(JSON.stringify({ message: 'Internal server error', success: false }), {
-                    status: 500,
-                    headers: { 'Content-Type': 'application/json' }
-                });
-            }
-        }
-    }
-
-    const newResponse = new Response(newBody, {
-        ...response,
-        headers: newHeaders
-    });
-
-    return newResponse;
+    return response;
 }
+
+/**
+ * Handle chat completion requests
+ */
+async function handleCompletion(request) {
+    const requestBody = await request.json();
+
+    const model = (requestBody.model || defaultModel).trim();
+    if (!model) {
+        return createErrorResponse('Model name for chat completion cannot be empty');
+    }
+
+    requestBody.model = model;
+
+    const options = { isChatCompletion: true };
+    const headers = new Headers(request.headers);
+    const isStreamReq = requestBody.stream || false;
+
+    const response = handleProxyRequest(requestBody, headers, options);
+    return processResponse(response, isStreamReq, model);
+}
+
+/**
+ * Handle embedding requests
+ */
+async function handleEmbedding(request) {
+    const requestBody = await request.json();
+    const input = (requestBody?.input || '').trim();
+
+    if (!input) {
+        return createErrorResponse('Embedding input cannot be empty');
+    }
+
+    return handleProxyRequest(requestBody, new Headers(request.headers));
+}
+
 
 async function handleProviderUpdate(config) {
     /* structure
-    {
-      "replace": true,
-      "providers": {
-          "https://a.com": {
-              "token1": {
-                  "models": {
-                      "gpt-4o": {
-                          "functionEnabled": false,
-                          "priority": 60
-                      },
-                      "gpt-4o-mini": {},
-                      "o1": {
-                          "realModel": "o1-preview",
-                          "functionEnabled": true,
-                          "priority": 35
-                      },
-                      "claude-3-5-sonnet-20241022": {
-                          "realModel": "claude-3-5-sonnet-20240620"
-                      }
-                  },
-                  "tbd": "unknown"
-              }
-          }
-      }
-  }
+        {
+        "replace": true,
+        "providers": {
+            "https://a.com": {
+                "paths": {
+                    "completion": "/v1/chat/completions",
+                    "embedding": "/v1/embeddings"
+                },
+                "tokens": {
+                    "token1": {
+                        "models": {
+                            "gpt-4o": {
+                                "functionEnabled": false,
+                                "priority": 60,
+                                "type": "completion"
+                            },
+                            "gpt-4o-mini": {},
+                            "o1": {
+                                "realModel": "o1-preview",
+                                "functionEnabled": true,
+                                "priority": 35
+                            },
+                            "text-embedding-3-large": {
+                                "priority": 10,
+                                "type": "embedding"
+                            },
+                            "claude-3-5-sonnet-20241022": {
+                                "realModel": "claude-3-5-sonnet-20240620"
+                            }
+                        },
+                        "tbd": "unknown"
+                    }
+                }
+            }
+        }
+    }
   */
 
     if (!config) {
-        return new Response(JSON.stringify({ message: 'Invalid config', success: false }), {
-            status: 400,
-            headers: { 'Content-Type': 'application/json' }
-        });
+        return createErrorResponse('Invalid config', 400);
     }
 
     let replace = false;
@@ -780,10 +882,7 @@ async function handleProviderUpdate(config) {
 
     const providers = config?.providers;
     if (!isNotEmptyObject(providers)) {
-        return new Response(JSON.stringify({ message: 'New providers cannot be empty', success: false }), {
-            status: 400,
-            headers: { 'Content-Type': 'application/json' }
-        });
+        return createErrorResponse('New providers cannot be empty', 400);
     }
 
     const map = new Map();
@@ -816,26 +915,28 @@ async function handleProviderUpdate(config) {
             return;
         }
 
-        const address = url.trim();
+        const address = url.trim().replace(/\/+$/, "");
         if (!isValidURL(address)) {
             console.warn(`Drop illegal config due to url: ${url} is not valid`);
             return;
         }
 
         const obj = providers[url];
-        if (!isNotEmptyObject(obj)) {
+        const records = obj?.tokens || {};
+        if (!isNotEmptyObject(records)) {
             console.warn(`Ignore invalid config for url: ${url}`);
             return;
         }
 
-        Object.keys(obj).forEach(key => {
+        const paths = obj?.paths || {};
+        Object.keys(records).forEach(key => {
             if (typeof key !== "string") {
                 console.warn(`Ignore invalid config for url: ${url}, token: ${key} because token must be string`);
                 return;
             }
 
             const token = key.trim();
-            const service = obj[key];
+            const service = records[key];
             if (!isNotEmptyObject(service?.models)) {
                 console.warn(`Ignore invalid config for url: ${url}, token: ${key} because models is empty`);
                 return;
@@ -860,7 +961,18 @@ async function handleProviderUpdate(config) {
                     return;
                 }
 
-                item["url"] = address;
+                const type = (item.type || '').trim().toLowerCase() || 'completion';
+                if (!(type in defaultRequestPath)) {
+                    console.warn(`Skip due to invalid model type: ${item}, url: ${url}, token: ${key}, model: ${name}`);
+                    return;
+                }
+
+                let urlPath = (paths[type] || '').trim() || defaultRequestPath[type];
+                if (!urlPath.startsWith('/')) {
+                    urlPath = '/' + urlPath;
+                }
+
+                item["url"] = address + urlPath;
                 item["token"] = token;
 
                 const provider = map.get(model) || {};
