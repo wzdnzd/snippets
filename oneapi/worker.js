@@ -47,7 +47,7 @@ const cacheConfig = {
 };
 
 // Default request paths for different types of models
-const defaultRequestPath = {
+const defaultRequestPaths = {
     "completion": "/v1/chat/completions",
     "embedding": "/v1/embeddings",
     "speech": "/v1/audio/speech",
@@ -58,6 +58,8 @@ const defaultRequestPath = {
     "imageVariation": "/v1/images/variations",
     "moderation": "/v1/moderations",
 };
+
+const supportedRequestPaths = new Set(Object.values(defaultRequestPaths));
 
 class SimpleCache {
     constructor() {
@@ -421,7 +423,7 @@ async function handleRequest(request) {
     const authToken = accessToken.substring(7).trim();
     const url = new URL(request.url);
 
-    if (['/v1/models', '/v1/chat/completions', '/v1/embeddings'].includes(url.pathname) && authToken !== (SECRET_KEY || '')
+    if (('/v1/models' === url.pathname || supportedRequestPaths.has(url.pathname)) && authToken !== (SECRET_KEY || '')
         || ['/v1/provider/list', '/v1/provider/update', '/v1/provider/reload'].includes(url.pathname)
         && authToken !== (ADMIN_AUTH_TOKEN || '')) {
         return createErrorResponse('Unauthorized', 401);
@@ -435,6 +437,10 @@ async function handleRequest(request) {
         response = await handleCompletion(request);
     } else if (url.pathname === '/v1/embeddings' && request.method === 'POST') {
         response = await handleEmbedding(request);
+    } else if (supportedRequestPaths.has(url.pathname) && request.method === 'POST') {
+        const body = await request.json();
+        const headers = new Headers(request.headers);
+        response = await handleProxyRequest(body, headers);
     } else if (url.pathname === '/v1/provider/list' && request.method === 'GET') {
         response = await handleProviderList();
     } else if (url.pathname === '/v1/provider/update' && request.method === 'PUT') {
@@ -619,6 +625,7 @@ async function processResponse(response, isStreamReq, model) {
     if (!response) {
         return createErrorResponse('No response from server', 500);
     } else if (response.status !== 200) {
+        console.error(`Request failed, model: ${model}, stream: ${isStreamReq}, status: ${response.status}`);
         return response;
     }
 
@@ -627,10 +634,13 @@ async function processResponse(response, isStreamReq, model) {
 
     let newBody = response.body;
     const contentType = response.headers.get('Content-Type') || '';
+    console.log(`Start parse response, model: ${model}, stream: ${isStreamReq}, content-type: ${contentType}`);
 
     if (isStreamReq && !contentType.includes('text/event-stream')) {
         // Need text/event-stream but got others
         if (contentType.includes('application/json')) {
+            console.log(`Request with stream but got 'application/json'`);
+
             try {
                 const data = await response.json();
 
@@ -768,7 +778,7 @@ async function handleProxyRequest(body, headers, options = {}, method = 'POST') 
             // Need switch to next provider
             invalidFlag = internalErrorFlag || switchNextStatusCodes.has(response.status);
 
-            if (response.status === 200) {
+            if (response.ok) {
                 // Request successed, no cooldown
                 selector.unfreeze(provider);
 
@@ -812,7 +822,7 @@ async function handleCompletion(request) {
     const headers = new Headers(request.headers);
     const isStreamReq = requestBody.stream || false;
 
-    const response = handleProxyRequest(requestBody, headers, options);
+    const response = await handleProxyRequest(requestBody, headers, options);
     return processResponse(response, isStreamReq, model);
 }
 
@@ -827,7 +837,16 @@ async function handleEmbedding(request) {
         return createErrorResponse('Embedding input cannot be empty');
     }
 
-    return handleProxyRequest(requestBody, new Headers(request.headers));
+    // const response = await handleProxyRequest(requestBody, new Headers(request.headers));
+    // const newHeaders = new Headers(response.headers);
+    // setCORSHeaders(newHeaders);
+
+    // return new Response(response.body, {
+    //     ...response,
+    //     headers: newHeaders
+    // });
+
+    return await handleProxyRequest(requestBody, new Headers(request.headers));
 }
 
 
@@ -962,12 +981,12 @@ async function handleProviderUpdate(config) {
                 }
 
                 const type = (item.type || '').trim().toLowerCase() || 'completion';
-                if (!(type in defaultRequestPath)) {
+                if (!(type in defaultRequestPaths)) {
                     console.warn(`Skip due to invalid model type: ${item}, url: ${url}, token: ${key}, model: ${name}`);
                     return;
                 }
 
-                let urlPath = (paths[type] || '').trim() || defaultRequestPath[type];
+                let urlPath = (paths[type] || '').trim() || defaultRequestPaths[type];
                 if (!urlPath.startsWith('/')) {
                     urlPath = '/' + urlPath;
                 }
