@@ -194,7 +194,7 @@ class AliasMethodSampler {
 }
 
 class ModelProvider {
-    constructor(address, token, realModel, priority, streamEnabled) {
+    constructor(address, token, realModel, priority, streamEnabled, instable) {
         // API address
         this.address = address;
 
@@ -209,6 +209,9 @@ class ModelProvider {
 
         // Stream enabled
         this.streamEnabled = streamEnabled;
+
+        // If true then need to check whether the response content is empty or not
+        this.instable = instable;
     }
 
     valueOf() {
@@ -253,6 +256,7 @@ class ModelProviderSelector {
         if (!this.providers?.length) {
             return null;
         } else if (this.providers.length === 1) {
+            console.log(`Only one provider, address: ${this.providers[0].address}, token: ${this.providers[0].token}, frozen: ${this.onHold(this.providers[0])}`);
             return this.providers[0];
         }
 
@@ -539,8 +543,13 @@ function setProviderHeaders(headers, proxyURL, accessToken) {
     headers.set('X-Real-IP', '8.8.8.8');
 
     headers.delete('Authorization');
-    if (accessToken) {
-        headers.set('Authorization', `Bearer ${accessToken}`);
+    if (accessToken && accessToken !== 'null') {
+        if (proxyURL.startsWith('https://api.anthropic.com')) {
+            headers.set('x-api-key', accessToken);
+            headers.set('anthropic-version', '2023-06-01');
+        } else {
+            headers.set('Authorization', `Bearer ${accessToken}`);
+        }
     }
 }
 
@@ -1180,7 +1189,12 @@ async function createModelProviderSelector(model) {
                 streamEnabled = item?.streamEnabled;
             }
 
-            const provider = new ModelProvider(url, token, realModel, priority, streamEnabled);
+            let instable = false;
+            if (item.hasOwnProperty("instable")) {
+                instable = item?.instable;
+            }
+
+            const provider = new ModelProvider(url, token, realModel, priority, streamEnabled, instable);
             modelProviders.add(provider);
             if (functionEnabled) {
                 modelProvidersFunctionEnabled.add(provider);
