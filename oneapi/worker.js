@@ -773,6 +773,19 @@ async function handleProxyRequest(body, headers, options = {}, method = 'POST') 
 
         // Update request body
         body.model = provider.realModel;
+
+        // Adapt o3-mini
+        if (body.model.startsWith('o3-mini') && !body.reasoning_effort) {
+            let reasoning_effort = 'low';
+            if (model === 'o3-mini-high') reasoning_effort = 'high';
+            else if (model === 'o3-mini-medium') reasoning_effort = 'medium';
+
+            body.model = 'o3-mini';
+
+            // see: https://community.openai.com/t/is-03-mini-in-the-api-the-low-medium-or-high-version/1110423
+            body.reasoning_effort = reasoning_effort;
+        }
+
         if (isChatCompletion) {
             body.stream = isStreamReq && provider.streamEnabled;
         }
