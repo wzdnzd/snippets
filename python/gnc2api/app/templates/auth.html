@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>验证页面</title>
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#764ba2">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="GBalance">
+    <link rel="icon" href="/static/icons/icon-192x192.png">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/auth.css">
+</head>
+
+<body>
+    <div class="container">
+        <div class="logo">
+            <i class="fas fa-shield-alt"></i>
+        </div>
+        <h2>安全验证</h2>
+        <form id="auth-form" action="/auth" method="post">
+            <div class="input-group">
+                <i class="fas fa-key"></i>
+                <input type="password" id="auth-token" name="auth_token" required placeholder="请输入验证令牌">
+            </div>
+            <button type="submit">
+                验证访问
+            </button>
+        </form>
+        {% if error %}
+        <p class="error-message">{{ error }}</p>
+        {% endif %}
+    </div>
+    <script src="/static/js/auth.js"></script>
+</body>
+
+</html>

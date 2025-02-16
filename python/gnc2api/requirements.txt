@@ -1,0 +1,11 @@
+fastapi
+httpx
+openai
+pydantic
+pydantic_settings
+requests
+starlette
+uvicorn
+google-genai
+jinja2
+python-multipart

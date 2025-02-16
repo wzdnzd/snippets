@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API接口状态</title>
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#764ba2">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="GBalance">
+    <link rel="icon" href="/static/icons/icon-192x192.png">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/providers_status.css">
+</head>
+
+<body>
+    <div class="container">
+        <button class="refresh-btn" onclick="refreshPage(this)">
+            <i class="fas fa-sync-alt"></i>
+        </button>
+        <h1>API接口状态</h1>
+        <div class="key-list">
+            <h2 onclick="toggleSection(this, 'validProviders')">
+                <span>
+                    <i class="fas fa-chevron-down toggle-icon"></i>
+                    <i class="fas fa-check-circle" style="color: #27ae60;"></i>
+                    有效接口
+                </span>
+                <button class="copy-btn" onclick="event.stopPropagation(); copyProviders('valid')">
+                    <i class="fas fa-copy"></i>
+                    批量复制
+                </button>
+            </h2>
+            <div class="key-content">
+                <ul id="validProviders">
+                    {% for provider, fail_count in valid_providers.items() %}
+                    <li>
+                        <div class="key-info">
+                            <span class="status-badge status-valid">
+                                <i class="fas fa-check"></i> 有效
+                            </span>
+                            <span class="key-text">{{ provider }}</span>
+                            <span class="fail-count">
+                                <i class="fas fa-exclamation-triangle"></i>
+                                失败: {{ fail_count }}
+                            </span>
+                        </div>
+                        <div class="key-actions">
+                            <button class="verify-btn" onclick="verifyProvider('{{ provider }}', this)">
+                                <i class="fas fa-check-circle"></i>
+                                验证
+                            </button>
+                            <button class="copy-btn" onclick="copyProvider('{{ provider }}')">
+                                <i class="fas fa-copy"></i>
+                                复制
+                            </button>
+                        </div>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+        <div class="key-list">
+            <h2 onclick="toggleSection(this, 'invalidProviders')">
+                <span>
+                    <i class="fas fa-chevron-down toggle-icon"></i>
+                    <i class="fas fa-times-circle" style="color: #e74c3c;"></i>
+                    无效接口
+                </span>
+                <button class="copy-btn" onclick="event.stopPropagation(); copyProviders('invalid')">
+                    <i class="fas fa-copy"></i>
+                    批量复制
+                </button>
+            </h2>
+            <div class="key-content">
+                <ul id="invalidProviders">
+                    {% for provider, fail_count in invalid_providers.items() %}
+                    <li>
+                        <div class="key-info">
+                            <span class="status-badge status-invalid">
+                                <i class="fas fa-times"></i> 无效
+                            </span>
+                            <span class="key-text">{{ provider }}</span>
+                            <span class="fail-count">
+                                <i class="fas fa-exclamation-triangle"></i>
+                                失败: {{ fail_count }}
+                            </span>
+                        </div>
+                        <div class="key-actions">
+                            <button class="verify-btn" onclick="verifyProvider('{{ provider }}', this)">
+                                <i class="fas fa-check-circle"></i>
+                                验证
+                            </button>
+                            <button class="copy-btn" onclick="copyProvider('{{ provider }}')">
+                                <i class="fas fa-copy"></i>
+                                复制
+                            </button>
+                        </div>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+        <div class="total">
+            <i class="fas fa-key"></i> 总接口数：{{ total }}
+        </div>
+    </div>
+
+    <div class="scroll-buttons">
+        <button class="scroll-btn" onclick="scrollToTop()" title="回到顶部">
+            <i class="fas fa-chevron-up"></i>
+        </button>
+        <button class="scroll-btn" onclick="scrollToBottom()" title="滚动到底部">
+            <i class="fas fa-chevron-down"></i>
+        </button>
+    </div>
+
+    <div id="copyStatus"></div>
+
+    <script src="/static/js/providers_status.js"></script>
+</body>
+
+</html>
