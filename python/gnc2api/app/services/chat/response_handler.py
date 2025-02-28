@@ -1,9 +1,12 @@
 # app/services/chat/response_handler.py
 
+import json
+import random
+import string
 import time
 import uuid
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
 
@@ -30,24 +33,37 @@ class GeminiResponseHandler(ResponseHandler):
 
 
 def _handle_openai_stream_response(response: Dict[str, Any], model: str, finish_reason: str) -> Dict[str, Any]:
-    text = _extract_text(response, model, stream=True)
+    text, tool_calls = _extract_result(response, model, stream=True, gemini_format=False)
+    if not text and not tool_calls:
+        delta = {}
+    else:
+        delta = {"content": text, "role": "assistant"}
+        if tool_calls:
+            delta["tool_calls"] = tool_calls
+
     return {
         "id": f"chatcmpl-{uuid.uuid4()}",
         "object": "chat.completion.chunk",
         "created": int(time.time()),
         "model": model,
-        "choices": [{"index": 0, "delta": {"content": text} if text else {}, "finish_reason": finish_reason}],
+        "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
     }
 
 
 def _handle_openai_normal_response(response: Dict[str, Any], model: str, finish_reason: str) -> Dict[str, Any]:
-    text = _extract_text(response, model, stream=False)
+    text, tool_calls = _extract_result(response, model, stream=False, gemini_format=False)
     return {
         "id": f"chatcmpl-{uuid.uuid4()}",
         "object": "chat.completion",
         "created": int(time.time()),
         "model": model,
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": finish_reason}],
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": text, "tool_calls": tool_calls},
+                "finish_reason": finish_reason,
+            }
+        ],
         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
 
@@ -96,8 +112,13 @@ def _handle_openai_normal_image_response(image_str: str, model: str, finish_reas
     }
 
 
-def _extract_text(response: Dict[str, Any], model: str, stream: bool = False) -> str:
-    text = ""
+def _extract_result(
+    response: Dict[str, Any],
+    model: str,
+    stream: bool = False,
+    gemini_format: bool = False,
+) -> tuple[str, List[Dict[str, Any]]]:
+    text, tool_calls = "", []
     if stream:
         if response.get("candidates"):
             candidate = response["candidates"][0]
@@ -117,6 +138,7 @@ def _extract_text(response: Dict[str, Any], model: str, stream: bool = False) ->
             else:
                 text = ""
             text = _add_search_link_text(model, candidate, text)
+            tool_calls = _extract_tool_calls(parts, gemini_format)
     else:
         if response.get("candidates"):
             candidate = response["candidates"][0]
@@ -139,23 +161,66 @@ def _extract_text(response: Dict[str, Any], model: str, stream: bool = False) ->
             else:
                 text = ""
                 for part in candidate["content"]["parts"]:
-                    text += part["text"]
+                    text += part.get("text", "")
             text = _add_search_link_text(model, candidate, text)
+            tool_calls = _extract_tool_calls(candidate["content"]["parts"], gemini_format)
         else:
             text = "暂无返回"
-    return text
+    return text, tool_calls
+
+
+def _extract_tool_calls(parts: List[Dict[str, Any]], gemini_format: bool) -> List[Dict[str, Any]]:
+    """提取工具调用信息"""
+    if not parts or not isinstance(parts, list):
+        return []
+
+    letters = string.ascii_lowercase + string.digits
+
+    tool_calls = list()
+    for i in range(len(parts)):
+        part = parts[i]
+        if not part or not isinstance(part, dict):
+            continue
+
+        item = part.get("functionCall", {})
+        if not item or not isinstance(item, dict):
+            continue
+
+        if gemini_format:
+            tool_calls.append(part)
+        else:
+            id = f"call_{''.join(random.sample(letters, 32))}"
+            name = item.get("name", "")
+            arguments = json.dumps(item.get("args", None) or {})
+
+            tool_calls.append(
+                {
+                    "index": i,
+                    "id": id,
+                    "type": "function",
+                    "function": {"name": name, "arguments": arguments},
+                }
+            )
+
+    return tool_calls
 
 
 def _handle_gemini_stream_response(response: Dict[str, Any], model: str, stream: bool) -> Dict[str, Any]:
-    text = _extract_text(response, model, stream=stream)
-    content = {"parts": [{"text": text}], "role": "model"}
+    text, tool_calls = _extract_result(response, model, stream=stream, gemini_format=True)
+    if tool_calls:
+        content = {"parts": tool_calls, "role": "model"}
+    else:
+        content = {"parts": [{"text": text}], "role": "model"}
     response["candidates"][0]["content"] = content
     return response
 
 
 def _handle_gemini_normal_response(response: Dict[str, Any], model: str, stream: bool) -> Dict[str, Any]:
-    text = _extract_text(response, model, stream=stream)
-    content = {"parts": [{"text": text}], "role": "model"}
+    text, tool_calls = _extract_result(response, model, stream=stream, gemini_format=True)
+    if tool_calls:
+        content = {"parts": tool_calls, "role": "model"}
+    else:
+        content = {"parts": [{"text": text}], "role": "model"}
     response["candidates"][0]["content"] = content
     return response
 
