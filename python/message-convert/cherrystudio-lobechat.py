@@ -40,6 +40,54 @@ def parse_cherry_studio_data(filepath: str) -> List[Dict]:
         if not isinstance(topics, list):
             topics = []
 
+        local_stotage = data.get("localStorage", {})
+        if not isinstance(local_stotage, dict):
+            local_stotage = {}
+
+        cherry_studio_data = local_stotage.get("persist:cherry-studio", "{}")
+        if not isinstance(cherry_studio_data, str):
+            return topics
+
+        try:
+            cherry_studio = json.loads(cherry_studio_data)
+            if not isinstance(cherry_studio, dict):
+                return topics
+
+            # Get assistants data
+            assistants_data = cherry_studio.get("assistants", "{}")
+            if not isinstance(assistants_data, str):
+                return topics
+
+            assistants = json.loads(assistants_data)
+            if not isinstance(assistants, dict):
+                return topics
+
+            # Get all topics from assistants
+            assistant_list = assistants.get("assistants", [])
+            if not isinstance(assistant_list, list):
+                return topics
+
+            # Iterate each assistant's topics
+            for assistant in assistant_list:
+                assistant_topics = assistant.get("topics", [])
+                if not isinstance(assistant_topics, list):
+                    continue
+
+                for topic in assistant_topics:
+                    topic_id = topic.get("id")
+                    topic_name = topic.get("name")
+                    topic_created_at = topic.get("createdAt")
+
+                    # Update the corresponding topic information in the topics list
+                    for t in topics:
+                        if t.get("id") == topic_id:
+                            t["name"] = topic_name
+                            t["createdAt"] = topic_created_at
+                            break
+
+        except json.JSONDecodeError:
+            return topics
+
         return topics
 
 
@@ -105,11 +153,13 @@ def main(filename: str, user_id: str, database_url: str, append: bool = True) ->
             if not isinstance(first_msg, dict):
                 continue
 
-            created_at_str = first_msg.get("createdAt", "")
-            try:
-                created_at = datetime.strptime(created_at_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-            except:
-                created_at = datetime.now(timezone.utc)
+            created_at = topic.get("createdAt", None)
+            if not created_at:
+                created_at_str = first_msg.get("createdAt", "")
+                try:
+                    created_at = datetime.strptime(created_at_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                except:
+                    created_at = datetime.now(timezone.utc)
 
             # Use the last message's time as topic update time
             last_msg = messages[-1]
@@ -123,9 +173,7 @@ def main(filename: str, user_id: str, database_url: str, append: bool = True) ->
                 updated_at = datetime.now(timezone.utc)
 
             # Extract topic title from the first message
-            title = ""
-            if isinstance(first_msg, dict) and first_msg.get("role") == "user":
-                title = first_msg.get("content", "")[:50]  # Use first 50 characters as title
+            title = topic.get("name", "默认话题")
 
             # Insert topic
             sql = "INSERT INTO topics (id, user_id, title, created_at, updated_at, history_summary) VALUES (%s, %s, %s, %s, %s, %s);"
@@ -139,7 +187,12 @@ def main(filename: str, user_id: str, database_url: str, append: bool = True) ->
 
                 message_id = f"msg_{random_chars(14, False)}"
                 role = trim(message.get("role", "")).lower()
+
                 content = trim(message.get("content", ""))
+                reasoning_content = trim(message.get("reasoning_content", ""))
+                if reasoning_content:
+                    content = f"<think>{reasoning_content}</think>\n{content}"
+
                 created_at_str = message.get("createdAt", "")
 
                 try:
@@ -153,8 +206,14 @@ def main(filename: str, user_id: str, database_url: str, append: bool = True) ->
                     conn.commit()
                     last_question_id = message_id
                 else:
-                    model = "gpt-3.5-turbo"  # Default model used by Cherry Studio
-                    provider = "openai"
+                    item = message.get("model", None)
+                    if item and isinstance(item, dict):
+                        model = item.get("id", "gpt-4o")
+                        provider = item.get("provider", "")
+                    else:
+                        model = "gpt-4o"  # Default model used by Cherry Studio
+                        provider = "openai"
+
                     parent_id = last_question_id
 
                     sql = "INSERT INTO messages (id, role, content, model, provider, user_id, topic_id, parent_id, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);"
