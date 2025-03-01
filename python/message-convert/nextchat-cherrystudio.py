@@ -28,7 +28,7 @@ def trim(text: str) -> str:
     return text.strip()
 
 
-def main(nextchat: str, cherrystudio: str, result: str = "") -> None:
+def main(nextchat: str, cherrystudio: str, result: str = "", append: bool = True) -> None:
     def generate_key(topic_name: str, created_at: str, assistant_id: str) -> str:
         return f"{trim(topic_name)}#@#{trim(created_at)}#@#{trim(assistant_id)}"
 
@@ -66,14 +66,14 @@ def main(nextchat: str, cherrystudio: str, result: str = "") -> None:
                 logging.error(f"invalid cherry studio data file: ${cherrystudio}")
                 return
 
-            # load exists topics
+            # Load existing topics
             indexed_db = data.get("indexedDB", None)
             if isinstance(indexed_db, dict):
                 topics = indexed_db.get("topics", None)
                 if not isinstance(topics, list):
                     topics = []
 
-            # load exists topics summary
+            # Load existing topics summary
             local_storage = data.get("localStorage", None)
             if not isinstance(local_storage, dict):
                 logging.error(f"skip migrate due to localStorage data missing for cherry studio")
@@ -98,7 +98,7 @@ def main(nextchat: str, cherrystudio: str, result: str = "") -> None:
                     return
 
                 assistant_id = default_assistant.get("id", None)
-                topics_summary = default_assistant.get("topics", [])
+                topics_summary = default_assistant.get("topics", []) if append else []
             except:
                 logging.error(f"failed to parse cherry studio persist, content: {content}")
                 return
@@ -106,7 +106,11 @@ def main(nextchat: str, cherrystudio: str, result: str = "") -> None:
         if not assistant_id:
             assistant_id = get_assistantid(topics=topics)
 
-        # unique topic
+        # Clear all topics if overwrite
+        if not append:
+            topics = []
+
+        # Create unique topic records
         records, added = set(), False
         for t in topics_summary:
             if not isinstance(t, dict):
@@ -115,7 +119,7 @@ def main(nextchat: str, cherrystudio: str, result: str = "") -> None:
             key = generate_key(t.get("name"), t.get("createdAt"), t.get("assistantId"))
             records.add(key)
 
-        # convert nextchat data to cherry studio data
+        # Convert nextchat data to cherry studio data
         for session in sessions:
             if not isinstance(session, dict):
                 continue
@@ -188,7 +192,7 @@ def main(nextchat: str, cherrystudio: str, result: str = "") -> None:
 
         data["indexedDB"]["topics"] = topics
 
-        # replace persist data
+        # Update persist data
         pcs = json.loads(local_storage.get(persist_key_name, ""))
         tools = json.loads(pcs.get("assistants", ""))
         assistants = tools.get("assistants", [])
@@ -202,11 +206,12 @@ def main(nextchat: str, cherrystudio: str, result: str = "") -> None:
         local_storage[persist_key_name] = json.dumps(pcs, ensure_ascii=False)
         data["localStorage"] = local_storage
 
-        # save data to target file
+        # Save data to target file
         with open(result, "w+", encoding="utf8") as f:
             json.dump(data, f, ensure_ascii=False)
 
-        logging.info(f"migrate finished, result file: {result}")
+        action = "appended to" if append else "replaced in"
+        logging.info(f"migrate finished, {action} {result}")
     except:
         traceback.print_exc()
 
@@ -263,5 +268,18 @@ if __name__ == "__main__":
         help="migrated data file path",
     )
 
+    parser.add_argument(
+        "-o",
+        "--overwrite",
+        action="store_true",
+        dest="overwrite",
+        help="overwrite existing sessions instead of appending (default: append)",
+    )
+
     args = parser.parse_args()
-    main(nextchat=args.nextchat, cherrystudio=args.cherrystudio, result=args.result)
+    main(
+        nextchat=args.nextchat,
+        cherrystudio=args.cherrystudio,
+        result=args.result,
+        append=not args.overwrite,
+    )
