@@ -320,7 +320,22 @@ def convert_nextchat_to_lobechat(data: List[Dict]) -> List[Dict]:
 
             message_id = f"msg_{random_chars(14)}"
             role = trim(msg.get("role", "")).lower()
-            content = msg.get("content", "")
+
+            text, content = "", msg.get("content")
+            if isinstance(content, str):
+                text = content
+            else:
+                array = list()
+                for item in content:
+                    msg_type = item.get("type", "")
+                    if msg_type == "text":
+                        array.append(item.get("text"))
+                    elif msg_type == "image_url":
+                        url = item.get("image_url").get("url")
+                        if url:
+                            array.append(f"图片链接：{url}")
+
+                text = "。".join(array)
 
             # 解析消息时间
             msg_created_at = parse_date(msg.get("date", ""))
@@ -328,7 +343,7 @@ def convert_nextchat_to_lobechat(data: List[Dict]) -> List[Dict]:
             message = {
                 "id": message_id,
                 "role": role,
-                "content": content,
+                "content": text,
                 "created_at": msg_created_at,
             }
 
