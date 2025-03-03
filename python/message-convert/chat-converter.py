@@ -4,9 +4,10 @@ import os
 import random
 import shutil
 import string
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple, Optional
 import uuid
+from zoneinfo import ZoneInfo
 from tzlocal import get_localzone
 
 import psycopg2
@@ -21,13 +22,11 @@ def trim(text: str) -> str:
     return text.strip()
 
 
-def random_chars(length: int, punctuation: bool = False) -> str:
+def random_chars(length: int) -> str:
     """生成指定长度的随机字符串"""
     length = max(length, 1)
-    if punctuation:
-        chars = "".join(random.sample(string.ascii_letters + string.digits + string.punctuation, length))
-    else:
-        chars = "".join(random.sample(string.ascii_letters + string.digits, length))
+    chars = "".join(random.sample(string.ascii_letters + string.digits, length))
+
     return chars
 
 
@@ -37,7 +36,70 @@ def get_session_id() -> str:
     return "".join(random.sample(chars, 21))
 
 
-def build_qa_pairs(messages: List[Tuple]) -> List[Dict]:
+def parse_date(date: str | datetime) -> datetime:
+    """解析常见格式日期字符串，返回 datetime 对象"""
+    if isinstance(date, datetime):
+        return date.replace(tzinfo=timezone.utc)
+
+    date = trim(date)
+    if not date:
+        return datetime.now(timezone.utc)
+
+    result = None
+    try:
+        if "-" in date:
+            if "." in date:
+                if "T" in date:
+                    if "Z" in date:
+                        result = datetime.strptime(date, "%Y-%m-%dT%H:%M:%S.%fZ")
+                    else:
+                        result = datetime.strptime(date, "%Y-%m-%dT%H:%M:%S.%f")
+                else:
+                    if "Z" in date:
+                        result = datetime.strptime(date, "%Y-%m-%d %H:%M:%S.%fZ")
+                    else:
+                        result = datetime.strptime(date, "%Y-%m-%d %H:%M:%S.%f")
+            else:
+                if "T" in date:
+                    if "Z" in date:
+                        result = datetime.strptime(date, "%Y-%m-%dT%H:%M:%SZ")
+                    else:
+                        result = datetime.strptime(date, "%Y-%m-%dT%H:%M:%S")
+                else:
+                    if "Z" in date:
+                        result = datetime.strptime(date, "%Y-%m-%d %H:%M:%SZ")
+                    else:
+                        result = datetime.strptime(date, "%Y-%m-%d %H:%M:%S")
+        elif "/" in date:
+            if "." in date:
+                if "T" in date:
+                    if "Z" in date:
+                        result = datetime.strptime(date, "%Y/%m/%dT%H:%M:%S.%fZ")
+                    else:
+                        result = datetime.strptime(date, "%Y/%m/%dT%H:%M:%S.%f")
+                else:
+                    if "Z" in date:
+                        result = datetime.strptime(date, "%Y/%m/%d %H:%M:%S.%fZ")
+                    else:
+                        result = datetime.strptime(date, "%Y/%m/%d %H:%M:%S.%f")
+            else:
+                if "T" in date:
+                    if "Z" in date:
+                        result = datetime.strptime(date, "%Y/%m/%dT%H:%M:%SZ")
+                    else:
+                        result = datetime.strptime(date, "%Y/%m/%dT%H:%M:%S")
+                else:
+                    if "Z" in date:
+                        result = datetime.strptime(date, "%Y/%m/%d %H:%M:%SZ")
+                    else:
+                        result = datetime.strptime(date, "%Y/%m/%d %H:%M:%S")
+    except:
+        print(f"解析日期字符串失败：{date}")
+
+    return result.replace(tzinfo=timezone.utc) if result else datetime.now(timezone.utc)
+
+
+def build_qa_pairs(messages: List[Tuple], tz: ZoneInfo = None) -> List[Dict]:
     """构建有序的问答对，基于parent_id关系，处理一个问题可能有多个回答的情况"""
     # 构建消息ID到消息的映射
     msg_map = {}
@@ -46,7 +108,8 @@ def build_qa_pairs(messages: List[Tuple]) -> List[Dict]:
     # 按时间顺序存储所有用户问题
     questions = []
 
-    local_tz = get_localzone()
+    # 获取本地时区
+    local_tz = tz or get_localzone()
 
     # 第一遍：构建基本映射
     for msg in messages:
@@ -255,16 +318,12 @@ def convert_nextchat_to_lobechat(data: List[Dict]) -> List[Dict]:
             if not isinstance(msg, dict):
                 continue
 
-            message_id = f"msg_{random_chars(14, False)}"
+            message_id = f"msg_{random_chars(14)}"
             role = trim(msg.get("role", "")).lower()
             content = msg.get("content", "")
 
             # 解析消息时间
-            date_str = msg.get("date", "")
-            try:
-                msg_created_at = datetime.strptime(date_str, "%Y/%m/%d %H:%M:%S").replace(tzinfo=timezone.utc)
-            except:
-                msg_created_at = datetime.now(timezone.utc)
+            msg_created_at = parse_date(msg.get("date", ""))
 
             message = {
                 "id": message_id,
@@ -292,7 +351,7 @@ def convert_nextchat_to_lobechat(data: List[Dict]) -> List[Dict]:
                 "title": session.get("topic", "新的聊天"),
                 "summary": session.get("memoryPrompt", ""),
                 "messages": converted_messages,
-                "created_at": date,
+                "created_at": converted_messages[0].get("created_at"),
                 "updated_at": date,
             }
         )
@@ -318,7 +377,7 @@ def convert_cherrystudio_to_lobechat(data: List[Dict]) -> List[Dict]:
             if not isinstance(msg, dict):
                 continue
 
-            message_id = f"msg_{random_chars(14, False)}"
+            message_id = f"msg_{random_chars(14)}"
             role = trim(msg.get("role", "")).lower()
             content = msg.get("content", "")
             reasoning_content = trim(msg.get("reasoning_content", ""))
@@ -326,11 +385,7 @@ def convert_cherrystudio_to_lobechat(data: List[Dict]) -> List[Dict]:
                 content = f"<think>{reasoning_content}</think>\n{content}"
 
             # 解析消息时间
-            date_str = msg.get("createdAt", "")
-            try:
-                msg_created_at = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-            except:
-                msg_created_at = datetime.now(timezone.utc)
+            msg_created_at = parse_date(msg.get("createdAt", ""))
 
             message = {
                 "id": message_id,
@@ -357,11 +412,7 @@ def convert_cherrystudio_to_lobechat(data: List[Dict]) -> List[Dict]:
             converted_messages.append(message)
 
         # 获取创建和更新时间
-        if topic.get("createdAt", ""):
-            created_at = datetime.strptime(topic.get("createdAt"), "%Y-%m-%dT%H:%M:%S.%f")
-        else:
-            created_at = converted_messages[0]["created_at"] if converted_messages else datetime.now(timezone.utc)
-
+        created_at = parse_date(topic.get("createdAt", ""))
         updated_at = converted_messages[-1]["created_at"] if converted_messages else created_at
 
         # 构建LobeChat格式的会话
@@ -381,6 +432,10 @@ def convert_cherrystudio_to_lobechat(data: List[Dict]) -> List[Dict]:
 def convert_lobechat_to_nextchat(data: List[Dict]) -> List[Dict]:
     """将LobeChat格式数据转换为NextChat格式"""
     result = []
+
+    # 获取本地时区
+    local_tz = get_localzone()
+
     for session in data:
         if not isinstance(session, dict):
             continue
@@ -395,17 +450,11 @@ def convert_lobechat_to_nextchat(data: List[Dict]) -> List[Dict]:
             if not isinstance(msg, dict):
                 continue
 
-            date = msg.get("date", None) or msg.get("created_at", None)
-            if not date:
-                date = datetime.now(timezone.utc)
-
-            if type(date) != str:
-                date = date.strftime("%Y/%m/%d %H:%M:%S")
-
+            date = parse_date(msg.get("date", None) or msg.get("created_at", None))
             message = {
                 "role": msg.get("role", ""),
                 "content": msg.get("content", ""),
-                "date": date,
+                "date": date.astimezone(local_tz).strftime("%Y/%m/%d %H:%M:%S"),
             }
 
             if msg.get("role") == "assistant" and msg.get("model"):
@@ -425,7 +474,7 @@ def convert_lobechat_to_nextchat(data: List[Dict]) -> List[Dict]:
                     "wordCount": 0,
                     "charCount": sum(len(msg["content"]) for msg in converted_messages),
                 },
-                "lastUpdate": int(session.get("updated_at").timestamp() * 1000),
+                "lastUpdate": int(session.get("updated_at").astimezone(local_tz).timestamp() * 1000),
                 "lastSummarizeIndex": 0,
                 "mask": {
                     "id": get_session_id(),
@@ -448,7 +497,7 @@ def convert_lobechat_to_nextchat(data: List[Dict]) -> List[Dict]:
                     },
                     "lang": "cn",
                     "builtin": False,
-                    "createdAt": int(session.get("created_at").timestamp() * 1000),
+                    "createdAt": int(session.get("created_at").astimezone(local_tz).timestamp() * 1000),
                 },
             }
         )
@@ -459,6 +508,10 @@ def convert_lobechat_to_nextchat(data: List[Dict]) -> List[Dict]:
 def convert_lobechat_to_cherrystudio(data: List[Dict]) -> List[Dict]:
     """将LobeChat格式数据转换为Cherry Studio格式"""
     result = []
+
+    # 获取本地时区
+    local_tz = get_localzone()
+
     for session in data:
         if not isinstance(session, dict):
             continue
@@ -473,23 +526,24 @@ def convert_lobechat_to_cherrystudio(data: List[Dict]) -> List[Dict]:
             if not isinstance(msg, dict):
                 continue
 
-            date = msg.get("date", None)
-            if not date or not isinstance(date, (datetime, str)):
-                date = datetime.now(timezone.utc)
+            role = msg.get("role", "")
+            date = parse_date(msg.get("date", None)).astimezone(local_tz)
 
-            if type(date) != str:
-                date = date.strftime("%Y-%m-%d %H:%M:%S")
+            if role == "user":
+                msg_created_at = date.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                msg_created_at = date.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
             message = {
                 "id": str(uuid.uuid4()).lower(),
-                "role": msg.get("role", ""),
+                "role": role,
                 "content": msg.get("content", ""),
-                "createdAt": date,
+                "createdAt": msg_created_at,
                 "type": "text",
                 "status": "success",
             }
 
-            if msg.get("role") == "assistant":
+            if role == "assistant":
                 model_id = msg.get("model", "gpt-4o")
                 message["model"] = {
                     "id": model_id,
@@ -507,7 +561,7 @@ def convert_lobechat_to_cherrystudio(data: List[Dict]) -> List[Dict]:
             "messages": converted_messages,
             "name": session.get("title", "默认话题"),
             "summary": session.get("summary", ""),
-            "createdAt": session.get("created_at").strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3],
+            "createdAt": session.get("created_at").astimezone(local_tz).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3],
         }
         result.append(topic)
 
@@ -558,27 +612,41 @@ def save_to_lobechat(
             conn.commit()
 
         for session in data:
-            topic_id = f"tpc_{random_chars(12, False)}"
+            topic_id = f"tpc_{random_chars(12)}"
             title = session.get("title", "")
             summary = session.get("summary", "")
-            created_at = session.get("created_at")
-            updated_at = session.get("updated_at")
+
+            topic_created_at: datetime = session.get("created_at")
+            topic_updated_at: datetime = session.get("updated_at")
+
+            # 将 topic_created_at 和 topic_updated_at 的 microsecond 设置为 6 位小数
+            topic_created_at = topic_created_at.replace(microsecond=topic_created_at.microsecond // 1000 * 1000)
+            topic_updated_at = topic_updated_at.replace(microsecond=topic_updated_at.microsecond // 1000 * 1000)
 
             # 插入topic
             sql = "INSERT INTO topics (id, user_id, title, created_at, updated_at, history_summary) VALUES (%s, %s, %s, %s, %s, %s);"
-            cur.execute(sql, (topic_id, user_id, title, created_at, updated_at, summary))
+            cur.execute(sql, (topic_id, user_id, title, topic_created_at, topic_updated_at, summary))
             conn.commit()
 
             # 插入消息
+            delta, step = 0, 10
             for message in session.get("messages", []):
                 message_id = message.get("id")
                 role = message.get("role")
                 content = message.get("content")
-                created_at = message.get("created_at")
+                msg_created_at = message.get("created_at")
+
+                # 将 msg_created_at 的 microsecond 设置为 6 位小数
+                msg_created_at = msg_created_at.replace(microsecond=msg_created_at.microsecond // 1000 * 1000)
+
+                # LobeChat 的 messages 按 created_at 排序，适当调整时间防止时间一致导致消息顺序混乱
+                # https://github.com/lobehub/lobe-chat/blob/main/src/database/server/models/message.ts#L125
+                msg_created_at = msg_created_at + timedelta(seconds=delta)
+                delta += step
 
                 if role == "user":
                     sql = "INSERT INTO messages (id, role, content, user_id, topic_id, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s);"
-                    cur.execute(sql, (message_id, role, content, user_id, topic_id, created_at, created_at))
+                    cur.execute(sql, (message_id, role, content, user_id, topic_id, msg_created_at, msg_created_at))
                 else:
                     model = message.get("model")
                     provider = message.get("provider")
@@ -596,8 +664,8 @@ def save_to_lobechat(
                             user_id,
                             topic_id,
                             parent_id,
-                            created_at,
-                            created_at,
+                            msg_created_at,
+                            msg_created_at,
                         ),
                     )
                 conn.commit()
@@ -629,6 +697,9 @@ def save_to_nextchat(data: List[Dict], filepath: str, append: bool = True, sourc
     else:
         # 覆盖模式：用新会话替换现有会话
         nextchat_data["chat-next-web-store"]["sessions"] = data
+
+    # 将 sessions 按 lastUpdate 倒序序列
+    nextchat_data["chat-next-web-store"]["sessions"].sort(key=lambda x: x.get("lastUpdate", -1), reverse=True)
 
     # 确保输出目录存在
     output_dir = os.path.dirname(os.path.abspath(filepath))
@@ -720,6 +791,9 @@ def save_to_cherry_studio(data: List[Dict], filepath: str, append: bool = True, 
         }
         topics_summary.append(summary)
 
+    # topics_summary 按 createdAt 倒序序列
+    topics_summary.sort(key=lambda x: x.get("createdAt", ""), reverse=True)
+
     # 更新localStorage
     try:
         pcs = json.loads(local_storage.get(persist_key, "{}"))
@@ -808,7 +882,7 @@ def convert_chat_format(
         return
 
     # 如果 output_path 存在，则先备份
-    if os.path.exists(output_path):
+    if target_format != ChatFormat.LOBECHAT and os.path.exists(output_path):
         backup_path = f"{output_path}.backup"
         shutil.copy2(output_path, backup_path)
         print(f"初始文件已备份到 {backup_path}")
