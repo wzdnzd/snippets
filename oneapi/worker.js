@@ -23,7 +23,7 @@ addEventListener('fetch', event => {
 const KV = database;
 const maxRetries = 5;
 const defaultModel = (DEFAULT_MODEL || 'gpt-4o').trim();
-const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
 
 // Key expired status
 const invalidStatus = 'dead';
@@ -853,20 +853,24 @@ async function handleCompletion(request) {
  */
 async function handleEmbedding(request) {
     const requestBody = await request.json();
-    const input = (requestBody?.input || '').trim();
 
-    if (!input) {
-        return createErrorResponse('Embedding input cannot be empty');
+    // Check input
+    const input = requestBody?.input || '';
+    let content;
+    if (typeof input === 'string') {
+        content = input.trim();
+    } else if (input instanceof Array) {
+        content = input.filter(i => i && i.trim());
+        if (content.length === 0) {
+            content = null;
+        }
+    } else {
+        content = null;
     }
 
-    // const response = await handleProxyRequest(requestBody, new Headers(request.headers));
-    // const newHeaders = new Headers(response.headers);
-    // setCORSHeaders(newHeaders);
-
-    // return new Response(response.body, {
-    //     ...response,
-    //     headers: newHeaders
-    // });
+    if (!content) {
+        return createErrorResponse('Embedding input cannot be empty');
+    }
 
     return await handleProxyRequest(requestBody, new Headers(request.headers));
 }
