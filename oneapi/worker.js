@@ -23,6 +23,11 @@ addEventListener('fetch', event => {
 const KV = database;
 const maxRetries = 5;
 const defaultModel = (DEFAULT_MODEL || 'gpt-4o').trim();
+
+// Default settings for functionCall
+const commonFunctionCallModel = (COMMON_FC_MODEL || '').trim();
+const unifyFunctionCallModel = ['true', '1'].includes((UNIFY_FC_MODEL || 'false').trim().toLowerCase());
+
 const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
 
 // Key expired status
@@ -40,11 +45,19 @@ const rateLimitStatusCodes = new Set([418, 429]);
 // Maximum Freeze Time, 3 days
 const maxFreezingDuration = 3 * 24 * 60 * 60 * 1000;
 
+/**
+ * Cache config
+ */
 const cacheConfig = {
     // Unit: ms, 7 days
     TTL: 7 * 24 * 60 * 60 * 1000,
     MAX_CACHE_SIZE: 10000,
 };
+
+/**
+ * Valid roles
+ */
+const validRoles = new Set(["system", "user", "assistant", "tool", "function", "developer"]);
 
 // Default request paths for different types of models
 const defaultRequestPaths = {
@@ -59,8 +72,14 @@ const defaultRequestPaths = {
     "moderation": "/v1/moderations",
 };
 
+/**
+ * Supported request paths
+ */
 const supportedRequestPaths = new Set(Object.values(defaultRequestPaths));
 
+/**
+ * Simple cache
+ */
 class SimpleCache {
     constructor() {
         this.cache = new Map();
@@ -130,6 +149,9 @@ class SimpleCache {
 // Cache provider selecotr
 const providerSelectorCache = new SimpleCache();
 
+/**
+ * Alias method sampler
+ */
 class AliasMethodSampler {
     constructor(weights) {
         this.length = weights.length;
@@ -193,6 +215,9 @@ class AliasMethodSampler {
     }
 }
 
+/**
+ * Model provider
+ */
 class ModelProvider {
     constructor(address, token, realModel, priority, streamEnabled, instable) {
         // API address
@@ -223,6 +248,9 @@ class ModelProvider {
     }
 }
 
+/**
+ * Model provider selector
+ */
 class ModelProviderSelector {
     constructor(providers) {
         if (!providers || providers.length <= 0) {
@@ -408,6 +436,9 @@ class ModelProviderSelector {
     }
 }
 
+/**
+ * Handle request
+ */
 async function handleRequest(request) {
     const corsHeaders = {
         'Access-Control-Allow-Origin': '*',
@@ -467,6 +498,9 @@ async function handleRequest(request) {
     return response;
 }
 
+/**
+ * Handle list models request
+ */
 async function handleListModels() {
     // List and return all openai models
     const headers = new Headers({ 'Content-Type': 'application/json' });
@@ -481,6 +515,9 @@ async function handleListModels() {
     });
 }
 
+/**
+ * Handle provider list request
+ */
 async function handleProviderList() {
     const headers = new Headers({ 'Content-Type': 'application/json' });
     setCORSHeaders(headers);
@@ -491,6 +528,9 @@ async function handleProviderList() {
     });
 }
 
+/**
+ * List all providers
+ */
 async function listAllProviders() {
     const items = await KV.list();
     const data = {};
@@ -630,11 +670,11 @@ async function sendRequest(headers, url, requestBody, method = 'POST') {
 /**
  * Process response based on content type and stream requirement
  */
-async function processResponse(response, isStreamReq, model) {
+async function processResponse(response, isStreamReq, requestModel, realModel) {
     if (!response) {
         return createErrorResponse('No response from server', 500);
     } else if (response.status !== 200) {
-        console.error(`Request failed, model: ${model}, stream: ${isStreamReq}, status: ${response.status}`);
+        console.error(`Request failed, request model: ${requestModel}, real model: ${realModel}, stream: ${isStreamReq}, status: ${response.status}`);
         return response;
     }
 
@@ -643,7 +683,7 @@ async function processResponse(response, isStreamReq, model) {
 
     let newBody = response.body;
     const contentType = response.headers.get('Content-Type') || '';
-    console.log(`Start parse response, model: ${model}, stream: ${isStreamReq}, content-type: ${contentType}`);
+    console.log(`Start parse response, request model: ${requestModel}, real model: ${realModel}, stream: ${isStreamReq}, content-type: ${contentType}`);
 
     if (isStreamReq && !contentType.includes('text/event-stream')) {
         // Need text/event-stream but got others
@@ -663,7 +703,7 @@ async function processResponse(response, isStreamReq, model) {
 
                 const record = choices[0].message || {};
                 const message = record?.content || '';
-                const content = transformToJSON(message, model, messageId);
+                const content = transformToJSON(message, requestModel, messageId);
                 const text = `data: ${content}\n\ndata: [Done]`;
 
                 newBody = new ReadableStream({
@@ -681,7 +721,7 @@ async function processResponse(response, isStreamReq, model) {
             const { readable, writable } = new TransformStream();
 
             // Transform chunk data to event-stream
-            streamResponse(response, writable, model, generateUUID());
+            streamResponse(response, writable, requestModel, generateUUID());
             newBody = readable;
         }
 
@@ -697,7 +737,7 @@ async function processResponse(response, isStreamReq, model) {
 
             // Replace model name to request model
             if (obj.hasOwnProperty("choices")) {
-                obj.model = model;
+                obj.model = requestModel;
             }
 
             const text = JSON.stringify();
@@ -738,9 +778,9 @@ async function handleProxyRequest(body, headers, options = {}, method = 'POST') 
     // Initialize selector
     const isChatCompletion = options?.isChatCompletion === true;
     const functionCall = isChatCompletion &&
-        (isNotEmptyObject(body.tools) || isNotEmptyObject(body.features));
+        (isNotEmptyObject(body.tools) || isNotEmptyObject(body.features) || isNotEmptyObject(body.tool_choice) || isNotEmptyObject(body.functions));
 
-    const selector = await initializeSelector(model, functionCall);
+    const selector = await initializeSelectorFallback(model, functionCall);
     if (!selector) {
         const message = functionCall ? `Not found any model '${model}' support function call` : `Not support model '${model}'`
         return createErrorResponse(message);
@@ -832,20 +872,40 @@ async function handleProxyRequest(body, headers, options = {}, method = 'POST') 
  */
 async function handleCompletion(request) {
     const requestBody = await request.json();
+    const requestModel = requestBody.model;
 
-    const model = (requestBody.model || defaultModel).trim();
-    if (!model) {
+    const realModel = (requestModel || defaultModel).trim();
+    if (!realModel) {
         return createErrorResponse('Model name for chat completion cannot be empty');
     }
 
-    requestBody.model = model;
+    requestBody.model = realModel;
+
+    // Preprocess message
+    const messages = [];
+    for (const message of (requestBody.messages || [])) {
+        try {
+            const item = await preprocessMessage(message);
+            if (item) {
+                messages.push(item);
+            }
+        } catch (error) {
+            console.error(`Preprocess message error: `, error);
+            return createErrorResponse(`Found invalid message: ${JSON.stringify(message)}`, 400);
+        }
+    }
+
+    if (messages.length === 0) {
+        return createErrorResponse('Messages cannot be empty');
+    }
+    requestBody.messages = messages;
 
     const options = { isChatCompletion: true };
     const headers = new Headers(request.headers);
     const isStreamReq = requestBody.stream || false;
 
     const response = await handleProxyRequest(requestBody, headers, options);
-    return processResponse(response, isStreamReq, model);
+    return processResponse(response, isStreamReq, requestModel, realModel);
 }
 
 /**
@@ -875,7 +935,9 @@ async function handleEmbedding(request) {
     return await handleProxyRequest(requestBody, new Headers(request.headers));
 }
 
-
+/**
+ * Handle provider update requests
+ */
 async function handleProviderUpdate(config) {
     /* structure
         {
@@ -1059,6 +1121,9 @@ async function handleProviderUpdate(config) {
     });
 }
 
+/**
+ * List all support models
+ */
 async function listSupportModels() {
     const items = await KV.list();
     const models = [];
@@ -1067,9 +1132,19 @@ async function listSupportModels() {
         if (!key) continue;
 
         const model = key.name.trim().toLowerCase();
-        const brand = model.includes("claude") ? "Anthropic"
-            : model.includes("gemini") ? "Google"
-                : (model.includes("gpt-") || ["o1", "o1-mini", "o1-preview"].includes(model)) ? "OpenAI" : "Other";
+        let brand = "Other";
+        if (model.includes("claude")) {
+            brand = "Anthropic";
+        } else if (model.includes("gemini")) {
+            brand = "Google";
+        } else if (model.includes("gpt-") || ["o1", "o1-mini", "o1-preview"].includes(model)) {
+            brand = "OpenAI";
+        } else if (model.includes("deepseek")) {
+            brand = "DeepSeek";
+        } else if (model.includes("qwen-") || model.includes("qwq-")) {
+            brand = "Qwen"
+        }
+
         models.push({
             id: model,
             object: "model",
@@ -1081,6 +1156,79 @@ async function listSupportModels() {
     return models;
 }
 
+/**
+ * Check and preprocess message
+ */
+async function preprocessMessage(message) {
+    if (!message || typeof message !== "object") {
+        throw new Error(`Invalid message: ${JSON.stringify(message)}`);
+    }
+
+    // See: https://platform.openai.com/docs/api-reference/chat/create#chat-create-messages
+    if (!message.hasOwnProperty("role")) {
+        throw new Error(`Message must have a role field: ${JSON.stringify(message)}`);
+    }
+
+    const role = (message.role || '').trim().toLowerCase();
+    if (!role) {
+        throw new Error(`Role cannot be empty: ${JSON.stringify(message)}`);
+    }
+
+    // Check where role is valid
+    if (!validRoles.has(role)) {
+        throw new Error(`Invalid role: ${role}, must be one of: ${Array.from(validRoles).join(", ")}`);
+    }
+
+    // Check where content is valid
+    if (role === "system" || role === "user" || role === "developer") {
+        // For system, user, developer roles, content must exist
+        if (!message.hasOwnProperty("content") || !message.content) {
+            throw new Error(`Message with role ${role} must have a content field: ${JSON.stringify(message)}`);
+        }
+    } else if (role === "assistant") {
+        // For assistant role, content must exist (unless assistant has tool_calls or function_call)
+        const content = (message.content || '');
+        const toolCalls = (message.tool_calls || []);
+        const functionCall = (message.function_call || {});
+
+        if (!content && !isNotEmptyObject(toolCalls) && !isNotEmptyObject(functionCall)) {
+            console.warn(`Assistant message must have a content field: ${JSON.stringify(message)}`);
+            return null;
+        }
+    } else if (role === "tool") {
+        // For tool role, content and tool_call_id must exist
+        if (!message.hasOwnProperty("content") || !message.content) {
+            throw new Error(`Tool message must have a content field: ${JSON.stringify(message)}`);
+        }
+
+        if (!message.hasOwnProperty("tool_call_id") || !message.tool_call_id) {
+            throw new Error(`Tool message must have a tool_call_id field: ${JSON.stringify(message)}`);
+        }
+    } else if (role === "function") {
+        if (!message.hasOwnProperty("name") || !message.name) {
+            throw new Error(`Function message must have a name field: ${JSON.stringify(message)}`);
+        }
+    }
+
+    // Check where name is valid
+    if (message.hasOwnProperty("name")) {
+        const name = (message.name || '').trim();
+        if (!name) {
+            throw new Error(`Name cannot be empty: ${JSON.stringify(message)}`);
+        }
+
+        // Name cannot contain spaces
+        if (name.includes(" ")) {
+            throw new Error(`Name cannot contain spaces: ${JSON.stringify(message)}`);
+        }
+    }
+
+    return message;
+}
+
+/**
+ * Transform text to JSON
+ */
 function transformToJSON(text, model, messageId) {
     return JSON.stringify({
         'id': `chatcmpl-${messageId}`,
@@ -1099,6 +1247,9 @@ function transformToJSON(text, model, messageId) {
     });
 }
 
+/**
+ * Generate UUID
+ */
 function generateUUID() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
         const r = (Math.random() * 16) | 0;
@@ -1107,14 +1258,30 @@ function generateUUID() {
     });
 }
 
+/**
+ * Check if object is not empty
+ */
 function isNotEmptyObject(obj) {
     if (!obj) {
         return false;
     }
 
-    return Object.keys(obj).length > 0;
+    if (typeof obj === "object") {
+        return Object.keys(obj).length > 0;
+    } else if (Array.isArray(obj)) {
+        if (obj.length <= 0) {
+            return false;
+        }
+
+        return obj.some(item => isNotEmptyObject(item));
+    }
+
+    return false;
 }
 
+/**
+ * Check if URL is valid
+ */
 function isValidURL(url) {
     if (!url || typeof url !== "string" || (!url.startsWith('https://') && !url.startsWith('http://'))) {
         return false;
@@ -1128,6 +1295,9 @@ function isValidURL(url) {
     }
 }
 
+/**
+ * Stream response
+ */
 async function streamResponse(response, writable, model, messageId) {
     const reader = response.body.getReader();
     const writer = writable.getWriter();
@@ -1155,6 +1325,9 @@ async function streamResponse(response, writable, model, messageId) {
     push();
 }
 
+/**
+ * Create model provider selector
+ */
 async function createModelProviderSelector(model) {
     const name = (model || '').trim();
     if (!name) {
@@ -1234,4 +1407,22 @@ async function createModelProviderSelector(model) {
         console.error(`Load provider service error, model: ${name}, config: ${content}`);
         return null;
     }
+}
+
+/**
+ * Initialize selector fallback
+ */
+async function initializeSelectorFallback(model, functionCall = false) {
+    if (functionCall && unifyFunctionCallModel && commonFunctionCallModel) {
+        return await initializeSelector(commonFunctionCallModel, functionCall);
+    }
+
+    let selector = await initializeSelector(model, functionCall);
+    if (!selector && functionCall) {
+        if (commonFunctionCallModel) {
+            selector = await initializeSelector(commonFunctionCallModel, functionCall);
+        }
+    }
+
+    return selector;
 }
