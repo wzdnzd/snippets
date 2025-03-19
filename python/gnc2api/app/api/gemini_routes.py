@@ -1,5 +1,5 @@
 import base64
-import traceback
+from copy import deepcopy
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -30,7 +30,7 @@ async def get_next_working_provider_wrapper(provider_manager: ProviderManager = 
     return await provider_manager.get_next_working_provider()
 
 
-model_service = ModelService(settings.MODEL_SEARCH)
+model_service = ModelService(settings.SEARCH_MODELS, settings.IMAGE_MODELS)
 
 
 @router.get("/models")
@@ -43,21 +43,40 @@ async def list_models(
     logger.info("Handling Gemini models list request")
     provider = await provider_manager.get_next_working_provider()
     models_json = model_service.get_gemini_models(provider)
-    models_json["models"].append(
-        {
-            "name": "models/gemini-2.0-flash-exp-search",
-            "version": "2.0",
-            "displayName": "Gemini 2.0 Flash Search Experimental",
-            "description": "Gemini 2.0 Flash Search Experimental",
-            "inputTokenLimit": 32767,
-            "outputTokenLimit": 8192,
-            "supportedGenerationMethods": ["generateContent", "countTokens"],
-            "temperature": 1,
-            "topP": 0.95,
-            "topK": 64,
-            "maxTemperature": 2,
-        }
-    )
+
+    # 模型名称和详细信息的映射
+    model_mapping = {x.get("name", "").split("/", maxsplit=1)[1]: x for x in models_json["models"]}
+
+    # 添加新的搜索模型
+    if model_service.search_models:
+        for name in model_service.search_models:
+            model = model_mapping.get(name, None)
+            if not model:
+                continue
+
+            item = deepcopy(model)
+            item["name"] = f"models/{name}-search"
+            display_name = f'{item.get("displayName")} For Search'
+            item["displayName"] = display_name
+            item["description"] = display_name
+
+            models_json["models"].append(item)
+
+    # 添加新的图像生成模型
+    if model_service.image_models:
+        for name in model_service.image_models:
+            model = model_mapping.get(name, None)
+            if not model:
+                continue
+
+            item = deepcopy(model)
+            item["name"] = f"models/{name}-image"
+            display_name = f'{item.get("displayName")} For Image'
+            item["displayName"] = display_name
+            item["description"] = display_name
+
+            models_json["models"].append(item)
+
     return models_json
 
 
@@ -78,6 +97,9 @@ async def generate_content(
     logger.info(f"Handling Gemini content generation request for model: {model_name}")
     logger.info(f"Request: \n{request.model_dump_json(indent=2)}")
     logger.info(f"Using API Provider: {provider}, API Key: {api_key}")
+
+    if not model_service.check_model_support(model_name):
+        raise HTTPException(status_code=400, detail=f"Model {model_name} is not supported")
 
     try:
         response = chat_service.generate_content(base_url=provider, model=model_name, request=request, api_key=api_key)
@@ -105,6 +127,9 @@ async def stream_generate_content(
     logger.info(f"Handling Gemini streaming content generation for model: {model_name}")
     logger.info(f"Request: \n{request.model_dump_json(indent=2)}")
     logger.info(f"Using API Provider: {provider}, API Key: {api_key}")
+
+    if not model_service.check_model_support(model_name):
+        raise HTTPException(status_code=400, detail=f"Model {model_name} is not supported")
 
     try:
         response_stream = chat_service.stream_generate_content(

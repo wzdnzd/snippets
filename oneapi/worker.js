@@ -670,11 +670,11 @@ async function sendRequest(headers, url, requestBody, method = 'POST') {
 /**
  * Process response based on content type and stream requirement
  */
-async function processResponse(response, isStreamReq, requestModel, realModel) {
+async function processResponse(response, isStreamReq, model) {
     if (!response) {
         return createErrorResponse('No response from server', 500);
     } else if (response.status !== 200) {
-        console.error(`Request failed, request model: ${requestModel}, real model: ${realModel}, stream: ${isStreamReq}, status: ${response.status}`);
+        console.error(`Request failed, model: ${model}, stream: ${isStreamReq}, status: ${response.status}`);
         return response;
     }
 
@@ -683,7 +683,7 @@ async function processResponse(response, isStreamReq, requestModel, realModel) {
 
     let newBody = response.body;
     const contentType = response.headers.get('Content-Type') || '';
-    console.log(`Start parse response, request model: ${requestModel}, real model: ${realModel}, stream: ${isStreamReq}, content-type: ${contentType}`);
+    console.log(`Start parse response, model: ${model}, stream: ${isStreamReq}, content-type: ${contentType}`);
 
     if (isStreamReq && !contentType.includes('text/event-stream')) {
         // Need text/event-stream but got others
@@ -703,7 +703,7 @@ async function processResponse(response, isStreamReq, requestModel, realModel) {
 
                 const record = choices[0].message || {};
                 const message = record?.content || '';
-                const content = transformToJSON(message, requestModel, messageId);
+                const content = transformToJSON(message, model, messageId);
                 const text = `data: ${content}\n\ndata: [Done]`;
 
                 newBody = new ReadableStream({
@@ -721,7 +721,7 @@ async function processResponse(response, isStreamReq, requestModel, realModel) {
             const { readable, writable } = new TransformStream();
 
             // Transform chunk data to event-stream
-            streamResponse(response, writable, requestModel, generateUUID());
+            streamResponse(response, writable, model, generateUUID());
             newBody = readable;
         }
 
@@ -737,7 +737,7 @@ async function processResponse(response, isStreamReq, requestModel, realModel) {
 
             // Replace model name to request model
             if (obj.hasOwnProperty("choices")) {
-                obj.model = requestModel;
+                obj.model = model;
             }
 
             const text = JSON.stringify();
@@ -872,14 +872,13 @@ async function handleProxyRequest(body, headers, options = {}, method = 'POST') 
  */
 async function handleCompletion(request) {
     const requestBody = await request.json();
-    const requestModel = requestBody.model;
 
-    const realModel = (requestModel || defaultModel).trim();
-    if (!realModel) {
+    const model = (requestBody.model || defaultModel).trim();
+    if (!model) {
         return createErrorResponse('Model name for chat completion cannot be empty');
     }
 
-    requestBody.model = realModel;
+    requestBody.model = model;
 
     // Preprocess message
     const messages = [];
@@ -905,7 +904,7 @@ async function handleCompletion(request) {
     const isStreamReq = requestBody.stream || false;
 
     const response = await handleProxyRequest(requestBody, headers, options);
-    return processResponse(response, isStreamReq, requestModel, realModel);
+    return processResponse(response, isStreamReq, model);
 }
 
 /**

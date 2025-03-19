@@ -17,7 +17,7 @@ logger = get_openai_logger()
 
 # 初始化服务
 security_service = SecurityService(settings.ALLOWED_TOKENS, settings.AUTH_TOKEN)
-model_service = ModelService(settings.MODEL_SEARCH)
+model_service = ModelService(settings.SEARCH_MODELS, settings.IMAGE_MODELS)
 embedding_service = EmbeddingService()
 
 
@@ -60,6 +60,10 @@ async def chat_completion(
     logger.info(f"Handling chat completion request for model: {request.model}")
     logger.info(f"Request: \n{request.model_dump_json(indent=2)}")
     logger.info(f"Using API Provider: {provider}, API Key: {api_key}")
+
+    if not model_service.check_model_support(request.model):
+        raise HTTPException(status_code=400, detail=f"Model {request.model} is not supported")
+
     try:
         response = await chat_service.create_chat_completion(provider, request, api_key)
 

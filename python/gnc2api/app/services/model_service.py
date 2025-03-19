@@ -10,113 +10,14 @@ logger = get_model_logger()
 
 
 class ModelService:
-    def __init__(self, model_search: list):
-        self.model_search = model_search
+    def __init__(self, search_models: list, image_models: list):
+        self.search_models = search_models
+        self.image_models = image_models
+        self.filtered_models = settings.FILTERED_MODELS
 
     def get_gemini_models(self, provider: str) -> Optional[Dict[str, Any]]:
-        return {
+        models = {
             "models": [
-                {
-                    "name": "models/chat-bison-001",
-                    "version": "001",
-                    "displayName": "PaLM 2 Chat (Legacy)",
-                    "description": "A legacy text-only model optimized for chat conversations",
-                    "inputTokenLimit": 4096,
-                    "outputTokenLimit": 1024,
-                    "supportedGenerationMethods": ["generateMessage", "countMessageTokens"],
-                    "temperature": 0.25,
-                    "topP": 0.95,
-                    "topK": 40,
-                },
-                {
-                    "name": "models/text-bison-001",
-                    "version": "001",
-                    "displayName": "PaLM 2 (Legacy)",
-                    "description": "A legacy model that understands text and generates text as an output",
-                    "inputTokenLimit": 8196,
-                    "outputTokenLimit": 1024,
-                    "supportedGenerationMethods": ["generateText", "countTextTokens", "createTunedTextModel"],
-                    "temperature": 0.7,
-                    "topP": 0.95,
-                    "topK": 40,
-                },
-                {
-                    "name": "models/embedding-gecko-001",
-                    "version": "001",
-                    "displayName": "Embedding Gecko",
-                    "description": "Obtain a distributed representation of a text.",
-                    "inputTokenLimit": 1024,
-                    "outputTokenLimit": 1,
-                    "supportedGenerationMethods": ["embedText", "countTextTokens"],
-                },
-                {
-                    "name": "models/gemini-1.0-pro-latest",
-                    "version": "001",
-                    "displayName": "Gemini 1.0 Pro Latest",
-                    "description": "The original Gemini 1.0 Pro model. This model will be discontinued on February 15th, 2025. Move to a newer Gemini version.",
-                    "inputTokenLimit": 30720,
-                    "outputTokenLimit": 2048,
-                    "supportedGenerationMethods": ["generateContent", "countTokens"],
-                    "temperature": 0.9,
-                    "topP": 1,
-                },
-                {
-                    "name": "models/gemini-1.0-pro",
-                    "version": "001",
-                    "displayName": "Gemini 1.0 Pro",
-                    "description": "The best model for scaling across a wide range of tasks",
-                    "inputTokenLimit": 30720,
-                    "outputTokenLimit": 2048,
-                    "supportedGenerationMethods": ["generateContent", "countTokens"],
-                    "temperature": 0.9,
-                    "topP": 1,
-                },
-                {
-                    "name": "models/gemini-pro",
-                    "version": "001",
-                    "displayName": "Gemini 1.0 Pro",
-                    "description": "The best model for scaling across a wide range of tasks",
-                    "inputTokenLimit": 30720,
-                    "outputTokenLimit": 2048,
-                    "supportedGenerationMethods": ["generateContent", "countTokens"],
-                    "temperature": 0.9,
-                    "topP": 1,
-                },
-                {
-                    "name": "models/gemini-1.0-pro-001",
-                    "version": "001",
-                    "displayName": "Gemini 1.0 Pro 001 (Tuning)",
-                    "description": "The original Gemini 1.0 Pro model version that supports tuning. Gemini 1.0 Pro will be discontinued on February 15th, 2025. Move to a newer Gemini version.",
-                    "inputTokenLimit": 30720,
-                    "outputTokenLimit": 2048,
-                    "supportedGenerationMethods": ["generateContent", "countTokens", "createTunedModel"],
-                    "temperature": 0.9,
-                    "topP": 1,
-                },
-                {
-                    "name": "models/gemini-1.0-pro-vision-latest",
-                    "version": "001",
-                    "displayName": "Gemini 1.0 Pro Vision",
-                    "description": "The original Gemini 1.0 Pro Vision model version which was optimized for image understanding. Gemini 1.0 Pro Vision was deprecated on July 12, 2024. Move to a newer Gemini version.",
-                    "inputTokenLimit": 12288,
-                    "outputTokenLimit": 4096,
-                    "supportedGenerationMethods": ["generateContent", "countTokens"],
-                    "temperature": 0.4,
-                    "topP": 1,
-                    "topK": 32,
-                },
-                {
-                    "name": "models/gemini-pro-vision",
-                    "version": "001",
-                    "displayName": "Gemini 1.0 Pro Vision",
-                    "description": "The original Gemini 1.0 Pro Vision model version which was optimized for image understanding. Gemini 1.0 Pro Vision was deprecated on July 12, 2024. Move to a newer Gemini version.",
-                    "inputTokenLimit": 12288,
-                    "outputTokenLimit": 4096,
-                    "supportedGenerationMethods": ["generateContent", "countTokens"],
-                    "temperature": 0.4,
-                    "topP": 1,
-                    "topK": 32,
-                },
                 {
                     "name": "models/gemini-1.5-pro-latest",
                     "version": "001",
@@ -339,16 +240,42 @@ class ModelService:
                     "maxTemperature": 2,
                 },
                 {
-                    "name": "models/gemini-2.0-flash-lite-preview",
-                    "version": "preview-02-05",
-                    "displayName": "Gemini 2.0 Flash-Lite Preview",
-                    "description": "Preview release (February 5th, 2025) of Gemini 2.0 Flash Lite",
+                    "name": "models/gemini-2.0-flash-exp-image-generation",
+                    "version": "2.0",
+                    "displayName": "Gemini 2.0 Flash (Image Generation) Experimental",
+                    "description": "Gemini 2.0 Flash (Image Generation) Experimental",
+                    "inputTokenLimit": 1048576,
+                    "outputTokenLimit": 8192,
+                    "supportedGenerationMethods": ["generateContent", "countTokens", "bidiGenerateContent"],
+                    "temperature": 1,
+                    "topP": 0.95,
+                    "topK": 40,
+                    "maxTemperature": 2,
+                },
+                {
+                    "name": "models/gemini-2.0-flash-lite-001",
+                    "version": "2.0",
+                    "displayName": "Gemini 2.0 Flash-Lite 001",
+                    "description": "Stable version of Gemini 2.0 Flash Lite",
                     "inputTokenLimit": 1048576,
                     "outputTokenLimit": 8192,
                     "supportedGenerationMethods": ["generateContent", "countTokens"],
                     "temperature": 1,
                     "topP": 0.95,
-                    "topK": 64,
+                    "topK": 40,
+                    "maxTemperature": 2,
+                },
+                {
+                    "name": "models/gemini-2.0-flash-lite",
+                    "version": "2.0",
+                    "displayName": "Gemini 2.0 Flash-Lite",
+                    "description": "Gemini 2.0 Flash-Lite",
+                    "inputTokenLimit": 1048576,
+                    "outputTokenLimit": 8192,
+                    "supportedGenerationMethods": ["generateContent", "countTokens"],
+                    "temperature": 1,
+                    "topP": 0.95,
+                    "topK": 40,
                     "maxTemperature": 2,
                 },
                 {
@@ -361,7 +288,20 @@ class ModelService:
                     "supportedGenerationMethods": ["generateContent", "countTokens"],
                     "temperature": 1,
                     "topP": 0.95,
-                    "topK": 64,
+                    "topK": 40,
+                    "maxTemperature": 2,
+                },
+                {
+                    "name": "models/gemini-2.0-flash-lite-preview",
+                    "version": "preview-02-05",
+                    "displayName": "Gemini 2.0 Flash-Lite Preview",
+                    "description": "Preview release (February 5th, 2025) of Gemini 2.0 Flash Lite",
+                    "inputTokenLimit": 1048576,
+                    "outputTokenLimit": 8192,
+                    "supportedGenerationMethods": ["generateContent", "countTokens"],
+                    "temperature": 1,
+                    "topP": 0.95,
+                    "topK": 40,
                     "maxTemperature": 2,
                 },
                 {
@@ -456,6 +396,17 @@ class ModelService:
                     "maxTemperature": 2,
                 },
                 {
+                    "name": "models/gemma-3-27b-it",
+                    "version": "001",
+                    "displayName": "Gemma 3 27B",
+                    "inputTokenLimit": 131072,
+                    "outputTokenLimit": 8192,
+                    "supportedGenerationMethods": ["generateContent", "countTokens"],
+                    "temperature": 1,
+                    "topP": 0.95,
+                    "topK": 64,
+                },
+                {
                     "name": "models/embedding-001",
                     "version": "001",
                     "displayName": "Embedding 001",
@@ -470,6 +421,24 @@ class ModelService:
                     "displayName": "Text Embedding 004",
                     "description": "Obtain a distributed representation of a text.",
                     "inputTokenLimit": 2048,
+                    "outputTokenLimit": 1,
+                    "supportedGenerationMethods": ["embedContent"],
+                },
+                {
+                    "name": "models/gemini-embedding-exp-03-07",
+                    "version": "exp-03-07",
+                    "displayName": "Gemini Embedding Experimental 03-07",
+                    "description": "Obtain a distributed representation of a text.",
+                    "inputTokenLimit": 8192,
+                    "outputTokenLimit": 1,
+                    "supportedGenerationMethods": ["embedContent"],
+                },
+                {
+                    "name": "models/gemini-embedding-exp",
+                    "version": "exp-03-07",
+                    "displayName": "Gemini Embedding Experimental",
+                    "description": "Obtain a distributed representation of a text.",
+                    "inputTokenLimit": 8192,
                     "outputTokenLimit": 1,
                     "supportedGenerationMethods": ["embedContent"],
                 },
@@ -494,8 +463,58 @@ class ModelService:
                     "outputTokenLimit": 8192,
                     "supportedGenerationMethods": ["predict"],
                 },
+                {
+                    "name": "models/gemini-2.0-flash-exp-search",
+                    "version": "2.0",
+                    "displayName": "Gemini 2.0 Flash Experimental For Search",
+                    "description": "Gemini 2.0 Flash Experimental For Search",
+                    "inputTokenLimit": 1048576,
+                    "outputTokenLimit": 8192,
+                    "supportedGenerationMethods": ["generateContent", "countTokens", "bidiGenerateContent"],
+                    "temperature": 1,
+                    "topP": 0.95,
+                    "topK": 40,
+                    "maxTemperature": 2,
+                },
+                {
+                    "name": "models/gemini-2.0-pro-exp-search",
+                    "version": "2.0",
+                    "displayName": "Gemini 2.0 Pro Experimental For Search",
+                    "description": "Gemini 2.0 Pro Experimental For Search",
+                    "inputTokenLimit": 2097152,
+                    "outputTokenLimit": 8192,
+                    "supportedGenerationMethods": ["generateContent", "countTokens"],
+                    "temperature": 1,
+                    "topP": 0.95,
+                    "topK": 64,
+                    "maxTemperature": 2,
+                },
+                {
+                    "name": "models/gemini-2.0-flash-exp-image",
+                    "version": "2.0",
+                    "displayName": "Gemini 2.0 Flash Experimental For Image",
+                    "description": "Gemini 2.0 Flash Experimental For Image",
+                    "inputTokenLimit": 1048576,
+                    "outputTokenLimit": 8192,
+                    "supportedGenerationMethods": ["generateContent", "countTokens", "bidiGenerateContent"],
+                    "temperature": 1,
+                    "topP": 0.95,
+                    "topK": 40,
+                    "maxTemperature": 2,
+                },
             ]
         }
+
+        filtered_models = []
+        for model in models.get("models", []):
+            model_id = model["name"].split("/")[-1]
+            if model_id not in self.filtered_models:
+                filtered_models.append(model)
+            else:
+                logger.info(f"Filtered out model: {model_id}")
+
+        models["models"] = filtered_models
+        return models
 
     def get_gemini_openai_models(self, provider: str) -> Optional[Dict[str, Any]]:
         try:
@@ -521,13 +540,28 @@ class ModelService:
             }
             openai_format["data"].append(openai_model)
 
-            if model_id in self.model_search:
+            if model_id in self.search_models:
                 search_model = openai_model.copy()
                 search_model["id"] = f"{model_id}-search"
                 openai_format["data"].append(search_model)
 
-        if settings.CREATE_IMAGE_MODEL:
-            image_model = openai_model.copy()
-            image_model["id"] = f"{settings.CREATE_IMAGE_MODEL}-chat"
-            openai_format["data"].append(image_model)
+            if model_id in self.image_models:
+                image_model = openai_model.copy()
+                image_model["id"] = f"{model_id}-image"
+                openai_format["data"].append(image_model)
+
         return openai_format
+
+    def check_model_support(self, model: str) -> bool:
+        if not model or not isinstance(model, str):
+            return False
+
+        model = model.strip()
+        if model.endswith("-search"):
+            model = model[:-7]
+            return model in self.search_models
+        if model.endswith("-image"):
+            model = model[:-6]
+            return model in self.image_models
+
+        return model not in self.filtered_models

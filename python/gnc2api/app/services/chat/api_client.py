@@ -4,7 +4,6 @@ import json
 import re
 from abc import ABC, abstractmethod
 from typing import Any, AsyncGenerator, Dict
-from venv import logger
 
 import httpx
 
@@ -41,6 +40,14 @@ class GeminiApiClient(ApiClient):
 
         return content
 
+    def _get_real_model(self, model: str) -> str:
+        if model.endswith("-search"):
+            model = model[:-7]
+        if model.endswith("-image"):
+            model = model[:-6]
+
+        return model
+
     def _get_headers(self, base_url: str, api_key: str) -> dict:
         return {
             "Accept": "application/json",
@@ -55,8 +62,8 @@ class GeminiApiClient(ApiClient):
     def generate_content(self, base_url: str, payload: Dict[str, Any], model: str, api_key: str) -> Dict[str, Any]:
         base_url = self._process_url(base_url)
         timeout = httpx.Timeout(self.timeout, read=self.timeout)
-        if model.endswith("-search"):
-            model = model[:-7]
+        model = self._get_real_model(model)
+
         with httpx.Client(timeout=timeout) as client:
             url = f"{base_url}/models/{model}:generateContent"
             response = client.post(url, json=payload, headers=self._get_headers(base_url, api_key))
@@ -80,8 +87,8 @@ class GeminiApiClient(ApiClient):
         base_url = self._process_url(base_url)
         timeout = httpx.Timeout(self.timeout, read=self.timeout)
         headers = self._get_headers(base_url, api_key)
-        if model.endswith("-search"):
-            model = model[:-7]
+        model = self._get_real_model(model)
+
         async with httpx.AsyncClient(timeout=timeout) as client:
             url = f"{base_url}/models/{model}:streamGenerateContent?alt=sse"
             async with client.stream(method="POST", url=url, json=payload, headers=headers) as response:

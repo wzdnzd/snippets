@@ -1,5 +1,6 @@
 # app/services/chat/response_handler.py
 
+import base64
 import json
 import random
 import string
@@ -9,6 +10,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
+from app.core.uploader import ImageUploaderFactory
 
 
 class ResponseHandler(ABC):
@@ -124,6 +126,8 @@ def _extract_result(
             candidate = response["candidates"][0]
             content = candidate.get("content", {})
             parts = content.get("parts", [])
+            if not parts:
+                return "", []
 
             if "text" in parts[0]:
                 text = parts[0].get("text")
@@ -135,8 +139,11 @@ def _extract_result(
                 text = _format_execution_result(parts[0]["executableCodeResult"])
             elif "codeExecutionResult" in parts[0]:
                 text = _format_execution_result(parts[0]["codeExecutionResult"])
+            elif "inlineData" in parts[0]:
+                text = _extract_image_data(parts[0])
             else:
                 text = ""
+
             text = _add_search_link_text(model, candidate, text)
             tool_calls = _extract_tool_calls(parts, gemini_format)
     else:
@@ -160,13 +167,45 @@ def _extract_result(
                         text = candidate["content"]["parts"][0]["text"]
             else:
                 text = ""
-                for part in candidate["content"]["parts"]:
-                    text += part.get("text", "")
+                if "parts" in candidate["content"]:
+                    for part in candidate["content"]["parts"]:
+                        if "text" in part:
+                            text += part["text"]
+                        elif "inlineData" in part:
+                            text += _extract_image_data(part)
+
             text = _add_search_link_text(model, candidate, text)
             tool_calls = _extract_tool_calls(candidate["content"]["parts"], gemini_format)
         else:
             text = "暂无返回"
     return text, tool_calls
+
+
+def _extract_image_data(part: dict) -> str:
+    image_uploader = None
+    if settings.UPLOAD_PROVIDER == "smms":
+        image_uploader = ImageUploaderFactory.create(
+            provider=settings.UPLOAD_PROVIDER, api_key=settings.SMMS_SECRET_TOKEN
+        )
+    elif settings.UPLOAD_PROVIDER == "picgo":
+        image_uploader = ImageUploaderFactory.create(provider=settings.UPLOAD_PROVIDER, api_key=settings.PICGO_API_KEY)
+    elif settings.UPLOAD_PROVIDER == "cloudflare_imgbed":
+        image_uploader = ImageUploaderFactory.create(
+            provider=settings.UPLOAD_PROVIDER,
+            base_url=settings.CLOUDFLARE_IMGBED_URL,
+            auth_code=settings.CLOUDFLARE_IMGBED_AUTH_CODE,
+        )
+    current_date = time.strftime("%Y/%m/%d")
+    filename = f"{current_date}/{uuid.uuid4().hex[:8]}.png"
+    base64_data = part["inlineData"]["data"]
+    # 将base64_data转成bytes数组
+    bytes_data = base64.b64decode(base64_data)
+    upload_response = image_uploader.upload(bytes_data, filename)
+    if upload_response.success:
+        text = f"\n![image]({upload_response.data.url})\n"
+    else:
+        text = ""
+    return text
 
 
 def _extract_tool_calls(parts: List[Dict[str, Any]], gemini_format: bool) -> List[Dict[str, Any]]:

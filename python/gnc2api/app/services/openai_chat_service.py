@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.core.logger import get_openai_logger
 from app.schemas.openai_models import ChatRequest
 from app.services.chat.api_client import GeminiApiClient
+from app.services.chat.stream_optimizer import openai_optimizer
 from app.services.chat.message_converter import OpenAIMessageConverter
 from app.services.chat.response_handler import OpenAIResponseHandler
 from app.services.provider_manager import ProviderManager
@@ -32,7 +33,12 @@ def _build_tools(request: ChatRequest, messages: List[Dict[str, Any]]) -> List[D
 
     if (
         settings.TOOLS_CODE_EXECUTION_ENABLED
-        and not (model.endswith("-search") or "-thinking" in model)
+        and not (
+            model.endswith("-search")
+            or "-thinking" in model
+            or model.endswith("-image")
+            or model.endswith("-image-generation")
+        )
         and not _has_image_parts(messages)
     ):
         tools.append({"code_execution": {}})
@@ -55,7 +61,14 @@ def _build_tools(request: ChatRequest, messages: List[Dict[str, Any]]) -> List[D
                 function_declarations.append(function)
 
         if function_declarations:
-            tools.append({"functionDeclarations": function_declarations})
+            # 按照 function 的 name 去重
+            names, functions = set(), []
+            for item in function_declarations:
+                if item.get("name") not in names:
+                    names.add(item.get("name"))
+                    functions.append(item)
+
+            tools.append({"functionDeclarations": functions})
 
     return tools
 
@@ -96,11 +109,16 @@ def _build_payload(
         "safetySettings": _get_safety_settings(request.model),
     }
 
+    if request.model.endswith("-image") or request.model.endswith("-image-generation"):
+        payload["generationConfig"]["responseModalities"] = ["Text", "Image"]
+
     if (
         instruction
         and isinstance(instruction, dict)
         and instruction.get("role") == "system"
         and instruction.get("parts")
+        and not request.model.endswith("-image")
+        and not request.model.endswith("-image-generation")
     ):
         payload["systemInstruction"] = instruction
 
@@ -115,6 +133,23 @@ class OpenAIChatService:
         self.response_handler = OpenAIResponseHandler(config=None)
         self.api_client = GeminiApiClient(settings.X_GOOG_API_CLIENT)
         self.provider_manager = provider_manager
+
+    def _extract_text_from_openai_chunk(self, chunk: Dict[str, Any]) -> str:
+        """从OpenAI响应块中提取文本内容"""
+        if not chunk.get("choices"):
+            return ""
+
+        choice = chunk["choices"][0]
+        if "delta" in choice and "content" in choice["delta"]:
+            return choice["delta"]["content"]
+        return ""
+
+    def _create_char_openai_chunk(self, original_chunk: Dict[str, Any], text: str) -> Dict[str, Any]:
+        """创建包含指定文本的OpenAI响应块"""
+        chunk_copy = json.loads(json.dumps(original_chunk))  # 深拷贝
+        if chunk_copy.get("choices") and "delta" in chunk_copy["choices"][0]:
+            chunk_copy["choices"][0]["delta"]["content"] = text
+        return chunk_copy
 
     async def create_chat_completion(
         self,
@@ -155,7 +190,19 @@ class OpenAIChatService:
                             chunk, model, stream=True, finish_reason=None
                         )
                         if openai_chunk:
-                            yield f"data: {json.dumps(openai_chunk)}\n\n"
+                            # 提取文本内容
+                            text = self._extract_text_from_openai_chunk(openai_chunk)
+                            if text:
+                                # 使用流式输出优化器处理文本输出
+                                async for optimized_chunk in openai_optimizer.optimize_stream_output(
+                                    text,
+                                    lambda t: self._create_char_openai_chunk(openai_chunk, t),
+                                    lambda c: f"data: {json.dumps(c)}\n\n",
+                                ):
+                                    yield optimized_chunk
+                            else:
+                                # 如果没有文本内容（如工具调用等），整块输出
+                                yield f"data: {json.dumps(openai_chunk)}\n\n"
                 yield f"data: {json.dumps(self.response_handler.handle_response({}, model, stream=True, finish_reason='stop'))}\n\n"
                 yield "data: [DONE]\n\n"
                 logger.info("Streaming completed successfully")
