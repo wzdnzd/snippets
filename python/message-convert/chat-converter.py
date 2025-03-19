@@ -94,7 +94,7 @@ def parse_date(date: str | datetime) -> datetime:
                     else:
                         result = datetime.strptime(date, "%Y/%m/%d %H:%M:%S")
     except:
-        print(f"解析日期字符串失败：{date}")
+        print(f"[错误] 解析日期字符串失败：{date}")
 
     return result.replace(tzinfo=timezone.utc) if result else datetime.now(timezone.utc)
 
@@ -176,7 +176,13 @@ class ChatFormat:
 def parse_cherry_studio_data(filepath: str) -> List[Dict]:
     """解析Cherry Studio格式的数据"""
     with open(filepath, "r", encoding="utf8") as f:
-        data = json.loads(f.read())
+        data = None
+        try:
+            data = json.loads(f.read())
+        except:
+            print(f"[错误] 解析 Cherry Studio 格式数据失败：{filepath}")
+            return []
+
         if not isinstance(data, dict):
             return []
 
@@ -240,7 +246,13 @@ def parse_cherry_studio_data(filepath: str) -> List[Dict]:
 def parse_nextchat_data(filepath: str) -> List[Dict]:
     """解析NextChat格式的数据"""
     with open(filepath, "r", encoding="utf8") as f:
-        data = json.loads(f.read())
+        data = None
+        try:
+            data = json.loads(f.read())
+        except:
+            print(f"[错误] 解析 NextChat 格式数据失败：{filepath}")
+            return []
+
         store = data.get("chat-next-web-store", {})
         sessions = store.get("sessions", [])
         if not isinstance(sessions, list):
@@ -742,7 +754,7 @@ def save_to_cherry_studio(data: List[Dict], filepath: str, append: bool = True, 
 
     assistant_id = get_assistant_id(cherry_data.get("localStorage", {}))
     if not assistant_id:
-        print("警告：未找到 assistant_id，跳过转换")
+        print("[警告] 未找到 assistant_id，跳过转换")
         return
 
     # 为每个topic的消息添加assistantId
@@ -845,7 +857,7 @@ def save_to_cherry_studio(data: List[Dict], filepath: str, append: bool = True, 
         local_storage[persist_key] = json.dumps(pcs, ensure_ascii=False)
         cherry_data["localStorage"] = local_storage
     except:
-        print("警告：更新localStorage数据失败")
+        print("[警告] 更新localStorage数据失败")
 
     # 确保输出目录存在
     output_dir = os.path.dirname(os.path.abspath(filepath))
@@ -869,18 +881,18 @@ def convert_chat_format(
     # 验证格式
     valid_formats = [ChatFormat.LOBECHAT, ChatFormat.NEXTCHAT, ChatFormat.CHERRYSTUDIO]
     if source_format not in valid_formats or target_format not in valid_formats:
-        print(f"不支持的格式：source_format={source_format}, target_format={target_format}")
+        print(f"[错误] 不支持的格式：source_format={source_format}, target_format={target_format}")
         return
 
     if source_format == target_format:
-        print("源格式和目标格式相同，无需转换")
+        print("[警告] 源格式和目标格式相同，无需转换")
         return
 
     # 读取源数据
     source_data = []
     if source_format == ChatFormat.LOBECHAT:
         if not database_url or not user_id:
-            print("转换LobeChat格式需要提供 database_url 和 user_id")
+            print("[错误] 转换LobeChat格式需要提供 database_url 和 user_id")
             return
         source_data = fetch_lobechat_data(database_url, user_id)
     elif source_format == ChatFormat.NEXTCHAT:
@@ -889,23 +901,23 @@ def convert_chat_format(
         source_data = parse_cherry_studio_data(input_path)
 
     if not source_data:
-        print("源数据为空，跳过转换")
+        print("[警告] 源数据为空，跳过转换")
         return
 
     if append and target_format != ChatFormat.LOBECHAT and (not output_path or not os.path.exists(output_path)):
-        print("追加输出路径不存在，跳过转换")
+        print("[警告] 追加输出路径不存在，跳过转换")
         return
 
     # 如果 output_path 存在，则先备份
     if target_format != ChatFormat.LOBECHAT and os.path.exists(output_path):
         backup_path = f"{output_path}.backup"
         shutil.copy2(output_path, backup_path)
-        print(f"初始文件已备份到 {backup_path}")
+        print(f"[信息] 初始文件已备份到 {backup_path}")
 
     # 保存为目标格式
     if target_format == ChatFormat.LOBECHAT:
         if not database_url or not user_id:
-            print("转换到LobeChat格式需要提供 database_url 和 user_id")
+            print("[错误] 转换到LobeChat格式需要提供 database_url 和 user_id")
             return
         save_to_lobechat(source_data, database_url, user_id, append, source_format)
     elif target_format == ChatFormat.NEXTCHAT:
@@ -914,7 +926,7 @@ def convert_chat_format(
         save_to_cherry_studio(source_data, output_path, append, source_format)
 
     action = "追加到" if append else "覆盖"
-    print(f"转换完成，已将数据{action}目标位置")
+    print(f"[信息] 转换完成，已将数据{action}目标位置")
 
 
 def main():
@@ -978,15 +990,15 @@ def main():
     # 验证参数
     if args.source == ChatFormat.LOBECHAT or args.target == ChatFormat.LOBECHAT:
         if not args.database_url or not args.user_id:
-            print("Error: 使用LobeChat格式时需要提供 --database-url 和 --user-id 参数")
+            print("[错误] 使用LobeChat格式时需要提供 --database-url 和 --user-id 参数")
             return
 
     if args.source != ChatFormat.LOBECHAT and not args.input:
-        print("Error: 非LobeChat源格式需要提供 --input 参数")
+        print("[错误] 非LobeChat源格式需要提供 --input 参数")
         return
 
     if args.target != ChatFormat.LOBECHAT and not args.output:
-        print("Error: 非LobeChat目标格式需要提供 --output 参数")
+        print("[错误] 非LobeChat目标格式需要提供 --output 参数")
         return
 
     # 执行转换
