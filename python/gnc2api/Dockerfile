@@ -22,7 +22,7 @@ ENV TOOLS_CODE_EXECUTION_ENABLED=false
 
 # 图片生成与网络搜索模型配置
 ENV TEST_MODEL='gemini-1.5-flash'
-ENV SEARCH_MODELS='["gemini-2.0-flash-exp"]'
+ENV SEARCH_MODELS='["gemini-2.0-flash-exp", "gemini-2.0-pro-exp"]'
 ENV IMAGE_MODELS='["gemini-2.0-flash-exp"]'
 ENV FILTERED_MODELS='["gemini-1.0-pro-vision-latest", "gemini-pro-vision", "chat-bison-001", "text-bison-001", "embedding-gecko-001"]'
 

@@ -47,7 +47,7 @@ async def list_models(
     # 模型名称和详细信息的映射
     model_mapping = {x.get("name", "").split("/", maxsplit=1)[1]: x for x in models_json["models"]}
 
-    # 添加新的搜索模型
+    # 添加搜索模型
     if model_service.search_models:
         for name in model_service.search_models:
             model = model_mapping.get(name, None)
@@ -62,7 +62,7 @@ async def list_models(
 
             models_json["models"].append(item)
 
-    # 添加新的图像生成模型
+    # 添加图像生成模型
     if model_service.image_models:
         for name in model_service.image_models:
             model = model_mapping.get(name, None)
