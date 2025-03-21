@@ -2,8 +2,8 @@ from typing import Optional
 
 from fastapi import Header, HTTPException
 
-from app.core.config import settings
-from app.core.logger import get_security_logger
+from app.config.config import settings
+from app.log.logger import get_security_logger
 
 logger = get_security_logger()
 

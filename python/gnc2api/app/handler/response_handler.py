@@ -1,16 +1,13 @@
-# app/services/chat/response_handler.py
-
 import base64
 import json
 import random
 import string
+from abc import ABC, abstractmethod
+from typing import Dict, Any, List, Optional
 import time
 import uuid
-from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
-
-from app.core.config import settings
-from app.core.uploader import ImageUploaderFactory
+from app.config.config import settings
+from app.utils.uploader import ImageUploaderFactory
 
 
 class ResponseHandler(ABC):

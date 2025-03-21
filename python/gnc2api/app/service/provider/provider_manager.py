@@ -2,8 +2,8 @@ import asyncio
 from itertools import cycle
 from typing import Dict
 
-from app.core.config import settings
-from app.core.logger import get_provider_manager_logger
+from app.config.config import settings
+from app.log.logger import get_provider_manager_logger
 
 logger = get_provider_manager_logger()
 

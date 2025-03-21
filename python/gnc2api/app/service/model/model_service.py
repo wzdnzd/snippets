@@ -3,8 +3,8 @@ from typing import Any, Dict, Optional
 
 import requests
 
-from app.core.config import settings
-from app.core.logger import get_model_logger
+from app.config.config import settings
+from app.log.logger import get_model_logger
 
 logger = get_model_logger()
 

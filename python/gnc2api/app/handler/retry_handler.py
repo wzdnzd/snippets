@@ -1,9 +1,7 @@
-# app/services/chat/retry_handler.py
-
 from functools import wraps
 from typing import Callable, TypeVar
 
-from app.core.logger import get_retry_logger
+from app.log.logger import get_retry_logger
 
 T = TypeVar("T")
 logger = get_retry_logger()

@@ -1,16 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from app.core.config import settings
-from app.core.logger import get_openai_logger
+from app.config.config import settings
 from app.core.security import SecurityService
-from app.schemas.openai_models import ChatRequest, EmbeddingRequest
-from app.services.chat.retry_handler import RetryHandler
-from app.services.embedding_service import EmbeddingService
-from app.services.key_generator import get_key
-from app.services.model_service import ModelService
-from app.services.openai_chat_service import OpenAIChatService
-from app.services.provider_manager import ProviderManager, get_provider_manager_instance
+from app.domain.openai_models import ChatRequest, EmbeddingRequest
+from app.handler.retry_handler import RetryHandler
+from app.log.logger import get_openai_logger
+from app.service.chat.openai_chat_service import OpenAIChatService
+from app.service.embedding.embedding_service import EmbeddingService
+from app.service.model.model_service import ModelService
+
+from app.service.key.key_generator import get_key
+from app.service.provider.provider_manager import ProviderManager, get_provider_manager_instance
 
 router = APIRouter()
 logger = get_openai_logger()

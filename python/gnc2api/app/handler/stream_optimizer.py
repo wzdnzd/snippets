@@ -1,10 +1,16 @@
-# app/services/chat/stream_optimizer.py
-
 import asyncio
 import math
-from typing import Any, List, AsyncGenerator, Callable
-from app.core.logger import get_openai_logger, get_gemini_logger
-from app.core.config import settings
+from typing import Any, AsyncGenerator, Callable, List
+
+from app.config.config import settings
+from app.core.constants import (
+    DEFAULT_STREAM_CHUNK_SIZE,
+    DEFAULT_STREAM_LONG_TEXT_THRESHOLD,
+    DEFAULT_STREAM_MAX_DELAY,
+    DEFAULT_STREAM_MIN_DELAY,
+    DEFAULT_STREAM_SHORT_TEXT_THRESHOLD,
+)
+from app.log.logger import get_gemini_logger, get_openai_logger
 
 logger_openai = get_openai_logger()
 logger_gemini = get_gemini_logger()
@@ -19,11 +25,11 @@ class StreamOptimizer:
     def __init__(
         self,
         logger=None,
-        min_delay: float = 0.016,
-        max_delay: float = 0.024,
-        short_text_threshold: int = 10,
-        long_text_threshold: int = 50,
-        chunk_size: int = 5,
+        min_delay: float = DEFAULT_STREAM_MIN_DELAY,
+        max_delay: float = DEFAULT_STREAM_MAX_DELAY,
+        short_text_threshold: int = DEFAULT_STREAM_SHORT_TEXT_THRESHOLD,
+        long_text_threshold: int = DEFAULT_STREAM_LONG_TEXT_THRESHOLD,
+        chunk_size: int = DEFAULT_STREAM_CHUNK_SIZE,
     ):
         """初始化流式输出优化器
 
@@ -77,7 +83,10 @@ class StreamOptimizer:
         return [text[i : i + self.chunk_size] for i in range(0, len(text), self.chunk_size)]
 
     async def optimize_stream_output(
-        self, text: str, create_response_chunk: Callable[[str], Any], format_chunk: Callable[[Any], str]
+        self,
+        text: str,
+        create_response_chunk: Callable[[str], Any],
+        format_chunk: Callable[[Any], str],
     ) -> AsyncGenerator[str, None]:
         """优化流式输出
 

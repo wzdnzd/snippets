@@ -1,11 +1,10 @@
-# app/services/chat/api_client.py
-
 import json
 import re
-from abc import ABC, abstractmethod
-from typing import Any, AsyncGenerator, Dict
-
 import httpx
+from abc import ABC, abstractmethod
+
+from typing import Any, AsyncGenerator, Dict
+from app.core.constants import DEFAULT_TIMEOUT, DEFAULT_X_GOOG_API_CLIENT
 
 
 class ApiClient(ABC):
@@ -25,7 +24,7 @@ class ApiClient(ABC):
 class GeminiApiClient(ApiClient):
     """Gemini API客户端"""
 
-    def __init__(self, client_version: str, timeout: int = 300):
+    def __init__(self, client_version: str = DEFAULT_X_GOOG_API_CLIENT, timeout: int = DEFAULT_TIMEOUT):
         self.timeout = timeout
         self.client_version = client_version
 

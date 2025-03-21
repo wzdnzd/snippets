@@ -1,17 +1,15 @@
-# app/services/chat_service.py
-
 import json
 from copy import deepcopy
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
-from app.core.config import settings
-from app.core.logger import get_openai_logger
-from app.schemas.openai_models import ChatRequest
-from app.services.chat.api_client import GeminiApiClient
-from app.services.chat.stream_optimizer import openai_optimizer
-from app.services.chat.message_converter import OpenAIMessageConverter
-from app.services.chat.response_handler import OpenAIResponseHandler
-from app.services.provider_manager import ProviderManager
+from app.config.config import settings
+from app.domain.openai_models import ChatRequest
+from app.handler.message_converter import OpenAIMessageConverter
+from app.handler.response_handler import OpenAIResponseHandler
+from app.handler.stream_optimizer import openai_optimizer
+from app.log.logger import get_openai_logger
+from app.service.client.api_client import GeminiApiClient
+from app.service.provider.provider_manager import ProviderManager
 
 logger = get_openai_logger()
 
@@ -93,7 +91,9 @@ def _get_safety_settings(model: str) -> List[Dict[str, str]]:
 
 
 def _build_payload(
-    request: ChatRequest, messages: List[Dict[str, Any]], instruction: Optional[Dict[str, Any]] = None
+    request: ChatRequest,
+    messages: List[Dict[str, Any]],
+    instruction: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """构建请求payload"""
     payload = {

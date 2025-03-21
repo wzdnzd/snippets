@@ -3,7 +3,7 @@ from typing import List, Union
 import openai
 from openai.types import CreateEmbeddingResponse
 
-from app.core.logger import get_embeddings_logger
+from app.log.logger import get_embeddings_logger
 
 logger = get_embeddings_logger()
 

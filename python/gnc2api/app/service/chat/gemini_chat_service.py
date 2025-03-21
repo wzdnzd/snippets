@@ -1,15 +1,13 @@
-# app/services/chat_service.py
-
 import json
 from typing import Any, AsyncGenerator, Dict, List
 
-from app.core.config import settings
-from app.core.logger import get_gemini_logger
-from app.schemas.gemini_models import GeminiRequest
-from app.services.chat.api_client import GeminiApiClient
-from app.services.chat.stream_optimizer import gemini_optimizer
-from app.services.chat.response_handler import GeminiResponseHandler
-from app.services.provider_manager import ProviderManager
+from app.config.config import settings
+from app.domain.gemini_models import GeminiRequest
+from app.handler.response_handler import GeminiResponseHandler
+from app.handler.stream_optimizer import gemini_optimizer
+from app.log.logger import get_gemini_logger
+from app.service.client.api_client import GeminiApiClient
+from app.service.provider.provider_manager import ProviderManager
 
 logger = get_gemini_logger()
 
@@ -88,12 +86,6 @@ class GeminiChatService:
         self.provider_manager = provider_manager
         self.response_handler = GeminiResponseHandler()
 
-    def generate_content(self, base_url: str, model: str, request: GeminiRequest, api_key: str) -> Dict[str, Any]:
-        """生成内容"""
-        payload = _build_payload(model, request)
-        response = self.api_client.generate_content(base_url, payload, model, api_key)
-        return self.response_handler.handle_response(response, model, stream=False)
-
     def _extract_text_from_response(self, response: Dict[str, Any]) -> str:
         """从响应中提取文本内容"""
         if not response.get("candidates"):
@@ -113,6 +105,12 @@ class GeminiChatService:
         if response_copy.get("candidates") and response_copy["candidates"][0].get("content", {}).get("parts"):
             response_copy["candidates"][0]["content"]["parts"][0]["text"] = text
         return response_copy
+
+    async def generate_content(self, base_url: str, model: str, request: GeminiRequest, api_key: str) -> Dict[str, Any]:
+        """生成内容"""
+        payload = _build_payload(model, request)
+        response = self.api_client.generate_content(base_url, payload, model, api_key)
+        return self.response_handler.handle_response(response, model, stream=False)
 
     async def stream_generate_content(
         self, base_url: str, model: str, request: GeminiRequest, api_key: str
