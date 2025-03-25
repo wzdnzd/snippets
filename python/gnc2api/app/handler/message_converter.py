@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import json
 import re
 from typing import Any, Dict, List, Optional
 import requests
@@ -43,8 +44,9 @@ def _convert_image(image_url: str) -> Dict[str, Any]:
     if image_url.startswith("data:image"):
         mime_type, encoded_data = _get_mime_type_and_data(image_url)
         return {"inline_data": {"mime_type": mime_type, "data": encoded_data}}
-
-    return {"image_url": {"url": image_url}}
+    else:
+        encoded_data = _convert_image_to_base64(image_url)
+        return {"inline_data": {"mime_type": "image/png", "data": encoded_data}}
 
 
 def _convert_image_to_base64(url: str) -> str:
@@ -101,6 +103,42 @@ class OpenAIMessageConverter(MessageConverter):
 
         for idx, msg in enumerate(messages):
             role = msg.get("role", "")
+
+            parts = []
+            # 特别处理最后一个assistant的消息，按\n\n分割
+            if (
+                "content" in msg
+                and isinstance(msg["content"], str)
+                and msg["content"]
+                and role == "assistant"
+                and idx == len(messages) - 2
+            ):
+                # 按\n\n分割消息
+                content_parts = msg["content"].split("\n\n")
+                for part in content_parts:
+                    if not part.strip():  # 跳过空内容
+                        continue
+                    # 处理可能包含图片的文本
+                    parts.extend(_process_text_with_image(part))
+            elif "content" in msg and isinstance(msg["content"], str) and msg["content"]:
+                # 请求 gemini 接口时如果包含 content 字段但内容为空时会返回 400 错误，所以需要判断是否为空并移除
+                parts.extend(_process_text_with_image(msg["content"]))
+            elif "content" in msg and isinstance(msg["content"], list):
+                for content in msg["content"]:
+                    if isinstance(content, str) and content:
+                        parts.append({"text": content})
+                    elif isinstance(content, dict):
+                        if content["type"] == "text" and content["text"]:
+                            parts.append({"text": content["text"]})
+                        elif content["type"] == "image_url":
+                            parts.append(_convert_image(content["image_url"]["url"]))
+            elif "tool_calls" in msg and isinstance(msg["tool_calls"], list):
+                for tool_call in msg["tool_calls"]:
+                    function_call = tool_call.get("function", {})
+                    function_call["args"] = json.loads(function_call.get("arguments", "{}"))
+                    del function_call["arguments"]
+                    parts.append({"functionCall": function_call})
+
             if role not in SUPPORTED_ROLES:
                 if role == "tool":
                     role = "user"
@@ -110,30 +148,6 @@ class OpenAIMessageConverter(MessageConverter):
                         role = "user"
                     else:
                         role = "model"
-
-            parts = []
-            # 特别处理最后一个assistant的消息，按\n\n分割
-            if role == "assistant" and idx == len(messages) - 2 and isinstance(msg["content"], str) and msg["content"]:
-                # 按\n\n分割消息
-                content_parts = msg["content"].split("\n\n")
-                for part in content_parts:
-                    if not part.strip():  # 跳过空内容
-                        continue
-                    # 处理可能包含图片的文本
-                    parts.extend(_process_text_with_image(part))
-            elif isinstance(msg["content"], str) and msg["content"]:
-                # 请求 gemini 接口时如果包含 content 字段但内容为空时会返回 400 错误，所以需要判断是否为空并移除
-                parts.extend(_process_text_with_image(msg["content"]))
-            elif isinstance(msg["content"], list):
-                for content in msg["content"]:
-                    if isinstance(content, str) and content:
-                        parts.append({"text": content})
-                    elif isinstance(content, dict):
-                        if content["type"] == "text" and content["text"]:
-                            parts.append({"text": content["text"]})
-                        elif content["type"] == "image_url":
-                            parts.append(_convert_image(content["image_url"]["url"]))
-
             if parts:
                 if role == "system":
                     system_instruction_parts.extend(parts)
