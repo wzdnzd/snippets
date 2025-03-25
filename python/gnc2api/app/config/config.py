@@ -6,6 +6,7 @@ from typing import List
 from pydantic_settings import BaseSettings
 
 from app.core.constants import (
+    API_VERSION,
     DEFAULT_FILTER_MODELS,
     DEFAULT_MODEL,
     DEFAULT_STREAM_CHUNK_SIZE,
@@ -25,6 +26,9 @@ class Settings(BaseSettings):
     API_PROVIDERS: List[str]
     ALLOWED_TOKENS: List[str]
 
+    # 官方API密钥，用于获取模型列表
+    OFFICIAL_API_KEY: str = ""
+
     # 模型相关配置
     TEST_MODEL: str = DEFAULT_MODEL
     SEARCH_MODELS: List[str] = ["gemini-2.0-flash-exp"]
@@ -37,6 +41,7 @@ class Settings(BaseSettings):
 
     MAX_FAILURES: int = 3
     X_GOOG_API_CLIENT: str = ""
+    BASE_URL: str = f"https://generativelanguage.googleapis.com/{API_VERSION}"
 
     # 图像生成相关配置
     UPLOAD_PROVIDER: str = "smms"

@@ -13,11 +13,69 @@ class ModelService:
     def __init__(self, search_models: list, image_models: list):
         self.search_models = search_models
         self.image_models = image_models
+        self.base_url = settings.BASE_URL
         self.filtered_models = settings.FILTERED_MODELS
 
     def get_gemini_models(self, provider: str) -> Optional[Dict[str, Any]]:
         models = {
             "models": [
+                {
+                    "name": "models/chat-bison-001",
+                    "version": "001",
+                    "displayName": "PaLM 2 Chat (Legacy)",
+                    "description": "A legacy text-only model optimized for chat conversations",
+                    "inputTokenLimit": 4096,
+                    "outputTokenLimit": 1024,
+                    "supportedGenerationMethods": ["generateMessage", "countMessageTokens"],
+                    "temperature": 0.25,
+                    "topP": 0.95,
+                    "topK": 40,
+                },
+                {
+                    "name": "models/text-bison-001",
+                    "version": "001",
+                    "displayName": "PaLM 2 (Legacy)",
+                    "description": "A legacy model that understands text and generates text as an output",
+                    "inputTokenLimit": 8196,
+                    "outputTokenLimit": 1024,
+                    "supportedGenerationMethods": ["generateText", "countTextTokens", "createTunedTextModel"],
+                    "temperature": 0.7,
+                    "topP": 0.95,
+                    "topK": 40,
+                },
+                {
+                    "name": "models/embedding-gecko-001",
+                    "version": "001",
+                    "displayName": "Embedding Gecko",
+                    "description": "Obtain a distributed representation of a text.",
+                    "inputTokenLimit": 1024,
+                    "outputTokenLimit": 1,
+                    "supportedGenerationMethods": ["embedText", "countTextTokens"],
+                },
+                {
+                    "name": "models/gemini-1.0-pro-vision-latest",
+                    "version": "001",
+                    "displayName": "Gemini 1.0 Pro Vision",
+                    "description": "The original Gemini 1.0 Pro Vision model version which was optimized for image understanding. Gemini 1.0 Pro Vision was deprecated on July 12, 2024. Move to a newer Gemini version.",
+                    "inputTokenLimit": 12288,
+                    "outputTokenLimit": 4096,
+                    "supportedGenerationMethods": ["generateContent", "countTokens"],
+                    "temperature": 0.4,
+                    "topP": 1,
+                    "topK": 32,
+                },
+                {
+                    "name": "models/gemini-pro-vision",
+                    "version": "001",
+                    "displayName": "Gemini 1.0 Pro Vision",
+                    "description": "The original Gemini 1.0 Pro Vision model version which was optimized for image understanding. Gemini 1.0 Pro Vision was deprecated on July 12, 2024. Move to a newer Gemini version.",
+                    "inputTokenLimit": 12288,
+                    "outputTokenLimit": 4096,
+                    "supportedGenerationMethods": ["generateContent", "countTokens"],
+                    "temperature": 0.4,
+                    "topP": 1,
+                    "topK": 32,
+                },
                 {
                     "name": "models/gemini-1.5-pro-latest",
                     "version": "001",
@@ -201,6 +259,19 @@ class ModelService:
                     "maxTemperature": 2,
                 },
                 {
+                    "name": "models/gemini-2.5-pro-exp-03-25",
+                    "version": "2.5-exp-03-25",
+                    "displayName": "Gemini 2.5 Pro Experimental 03-25",
+                    "description": "Experimental release (March 25th, 2025) of Gemini 2.5 Pro",
+                    "inputTokenLimit": 1048576,
+                    "outputTokenLimit": 65536,
+                    "supportedGenerationMethods": ["generateContent", "countTokens"],
+                    "temperature": 1,
+                    "topP": 0.95,
+                    "topK": 64,
+                    "maxTemperature": 2,
+                },
+                {
                     "name": "models/gemini-2.0-flash-exp",
                     "version": "2.0",
                     "displayName": "Gemini 2.0 Flash Experimental",
@@ -306,11 +377,11 @@ class ModelService:
                 },
                 {
                     "name": "models/gemini-2.0-pro-exp",
-                    "version": "2.0",
+                    "version": "2.5-exp-03-25",
                     "displayName": "Gemini 2.0 Pro Experimental",
-                    "description": "Experimental release (February 5th, 2025) of Gemini 2.0 Pro",
-                    "inputTokenLimit": 2097152,
-                    "outputTokenLimit": 8192,
+                    "description": "Experimental release (March 25th, 2025) of Gemini 2.5 Pro",
+                    "inputTokenLimit": 1048576,
+                    "outputTokenLimit": 65536,
                     "supportedGenerationMethods": ["generateContent", "countTokens"],
                     "temperature": 1,
                     "topP": 0.95,
@@ -319,11 +390,11 @@ class ModelService:
                 },
                 {
                     "name": "models/gemini-2.0-pro-exp-02-05",
-                    "version": "2.0",
+                    "version": "2.5-exp-03-25",
                     "displayName": "Gemini 2.0 Pro Experimental 02-05",
-                    "description": "Experimental release (February 5th, 2025) of Gemini 2.0 Pro",
-                    "inputTokenLimit": 2097152,
-                    "outputTokenLimit": 8192,
+                    "description": "Experimental release (March 25th, 2025) of Gemini 2.5 Pro",
+                    "inputTokenLimit": 1048576,
+                    "outputTokenLimit": 65536,
                     "supportedGenerationMethods": ["generateContent", "countTokens"],
                     "temperature": 1,
                     "topP": 0.95,
@@ -332,11 +403,11 @@ class ModelService:
                 },
                 {
                     "name": "models/gemini-exp-1206",
-                    "version": "2.0",
+                    "version": "2.5-exp-03-25",
                     "displayName": "Gemini Experimental 1206",
-                    "description": "Experimental release (February 5th, 2025) of Gemini 2.0 Pro",
-                    "inputTokenLimit": 2097152,
-                    "outputTokenLimit": 8192,
+                    "description": "Experimental release (March 25th, 2025) of Gemini 2.5 Pro",
+                    "inputTokenLimit": 1048576,
+                    "outputTokenLimit": 65536,
                     "supportedGenerationMethods": ["generateContent", "countTokens"],
                     "temperature": 1,
                     "topP": 0.95,
@@ -463,47 +534,25 @@ class ModelService:
                     "outputTokenLimit": 8192,
                     "supportedGenerationMethods": ["predict"],
                 },
-                {
-                    "name": "models/gemini-2.0-flash-exp-search",
-                    "version": "2.0",
-                    "displayName": "Gemini 2.0 Flash Experimental For Search",
-                    "description": "Gemini 2.0 Flash Experimental For Search",
-                    "inputTokenLimit": 1048576,
-                    "outputTokenLimit": 8192,
-                    "supportedGenerationMethods": ["generateContent", "countTokens", "bidiGenerateContent"],
-                    "temperature": 1,
-                    "topP": 0.95,
-                    "topK": 40,
-                    "maxTemperature": 2,
-                },
-                {
-                    "name": "models/gemini-2.0-pro-exp-search",
-                    "version": "2.0",
-                    "displayName": "Gemini 2.0 Pro Experimental For Search",
-                    "description": "Gemini 2.0 Pro Experimental For Search",
-                    "inputTokenLimit": 2097152,
-                    "outputTokenLimit": 8192,
-                    "supportedGenerationMethods": ["generateContent", "countTokens"],
-                    "temperature": 1,
-                    "topP": 0.95,
-                    "topK": 64,
-                    "maxTemperature": 2,
-                },
-                {
-                    "name": "models/gemini-2.0-flash-exp-image",
-                    "version": "2.0",
-                    "displayName": "Gemini 2.0 Flash Experimental For Image",
-                    "description": "Gemini 2.0 Flash Experimental For Image",
-                    "inputTokenLimit": 1048576,
-                    "outputTokenLimit": 8192,
-                    "supportedGenerationMethods": ["generateContent", "countTokens", "bidiGenerateContent"],
-                    "temperature": 1,
-                    "topP": 0.95,
-                    "topK": 40,
-                    "maxTemperature": 2,
-                },
             ]
         }
+
+        api_key = "" if not isinstance(settings.OFFICIAL_API_KEY, str) else settings.OFFICIAL_API_KEY.strip()
+        if api_key:
+            url = f"{self.base_url}/models?key={api_key}"
+
+            try:
+                response = requests.get(url)
+                if response.status_code == 200:
+                    data = response.json()
+                    if isinstance(data, dict) and data.get("models", None):
+                        models = data
+                        logger.info(f"Fetch model list from official api successed")
+                else:
+                    logger.error(f"Error: {response.status_code}")
+                    logger.error(response.text)
+            except requests.RequestException as e:
+                logger.error(f"Request failed: {e}")
 
         filtered_models = []
         for model in models.get("models", []):

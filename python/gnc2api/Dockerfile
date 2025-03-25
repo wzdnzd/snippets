@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 ENV AUTH_TOKEN='your_auth_token'
 ENV ALLOWED_TOKENS='["your_token_1"]'
 ENV API_PROVIDERS='["your_api_service"]'
+ENV OFFICIAL_API_KEY='your_gemini_api_key'
 
 # 通用配置
 ENV MAX_FAILURES=10
@@ -19,6 +20,7 @@ ENV SHOW_SEARCH_LINK=true
 ENV SHOW_THINKING_PROCESS=true
 ENV X_GOOG_API_CLIENT=genai-js/0.21.0
 ENV TOOLS_CODE_EXECUTION_ENABLED=false
+ENV BASE_URL=https://generativelanguage.googleapis.com/v1beta
 
 # 图片生成与网络搜索模型配置
 ENV TEST_MODEL='gemini-1.5-flash'
