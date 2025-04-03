@@ -1,6 +1,7 @@
-from typing import Any, Dict, List, Literal, Optional
-
+from typing import List, Optional, Dict, Any, Literal, Union
 from pydantic import BaseModel
+
+from app.core.constants import DEFAULT_TEMPERATURE, DEFAULT_TOP_K, DEFAULT_TOP_P
 
 
 class SafetySetting(BaseModel):
@@ -31,9 +32,9 @@ class GenerationConfig(BaseModel):
     responseSchema: Optional[Dict[str, Any]] = None
     candidateCount: Optional[int] = 1
     maxOutputTokens: Optional[int] = None
-    temperature: Optional[float] = None
-    topP: Optional[float] = None
-    topK: Optional[int] = None
+    temperature: Optional[float] = DEFAULT_TEMPERATURE
+    topP: Optional[float] = DEFAULT_TOP_P
+    topK: Optional[int] = DEFAULT_TOP_K
     presencePenalty: Optional[float] = None
     frequencyPenalty: Optional[float] = None
     responseLogprobs: Optional[bool] = None
@@ -52,7 +53,7 @@ class GeminiContent(BaseModel):
 
 class GeminiRequest(BaseModel):
     contents: List[GeminiContent] = []
-    tools: Optional[List[Dict[str, Any]]] = []
+    tools: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = []
     safetySettings: Optional[List[SafetySetting]] = None
     generationConfig: Optional[GenerationConfig] = None
     systemInstruction: Optional[SystemInstruction] = None

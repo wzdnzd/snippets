@@ -105,7 +105,6 @@ def _build_payload(
         "contents": messages,
         "generationConfig": {
             "temperature": request.temperature,
-            "maxOutputTokens": request.max_tokens,
             "stopSequences": request.stop,
             "topP": request.top_p,
             "topK": request.top_k,
@@ -113,7 +112,8 @@ def _build_payload(
         "tools": _build_tools(request, messages),
         "safetySettings": _get_safety_settings(request.model),
     }
-
+    if request.max_tokens is not None:
+        payload["generationConfig"]["maxOutputTokens"] = request.max_tokens
     if request.model.endswith("-image") or request.model.endswith("-image-generation"):
         payload["generationConfig"]["responseModalities"] = ["Text", "Image"]
 
@@ -136,7 +136,7 @@ class OpenAIChatService:
     def __init__(self, provider_manager: ProviderManager = None):
         self.message_converter = OpenAIMessageConverter()
         self.response_handler = OpenAIResponseHandler(config=None)
-        self.api_client = GeminiApiClient(settings.X_GOOG_API_CLIENT)
+        self.api_client = GeminiApiClient(settings.X_GOOG_API_CLIENT, timeout=settings.MAX_TIMEOUT)
         self.provider_manager = provider_manager
 
     def _extract_text_from_openai_chunk(self, chunk: Dict[str, Any]) -> str:
@@ -199,7 +199,7 @@ class OpenAIChatService:
                         if openai_chunk:
                             # 提取文本内容
                             text = self._extract_text_from_openai_chunk(openai_chunk)
-                            if text:
+                            if text and settings.STREAM_OPTIMIZER_ENABLED:
                                 # 使用流式输出优化器处理文本输出
                                 async for optimized_chunk in openai_optimizer.optimize_stream_output(
                                     text,

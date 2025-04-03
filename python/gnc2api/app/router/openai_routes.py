@@ -37,7 +37,7 @@ async def list_models(
 ):
     logger.info("-" * 50 + "list_models" + "-" * 50)
     logger.info("Handling models list request")
-    provider = await provider_manager.get_next_working_provider()
+    provider = await provider_manager.get_first_valid_provider()
     logger.info(f"Using API provider: {provider}")
     try:
         return model_service.get_gemini_openai_models(provider)

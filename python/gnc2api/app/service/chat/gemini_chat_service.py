@@ -42,6 +42,8 @@ def _build_tools(model: str, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     tool = dict()
     if payload and isinstance(payload, dict) and "tools" in payload:
+        if payload.get("tools") and isinstance(payload.get("tools"), dict):
+            payload["tools"] = [payload.get("tools")]
         items = payload.get("tools", [])
         if items and isinstance(items, list):
             tool.update(_merge_tools(items))
@@ -85,6 +87,11 @@ def _get_safety_settings(model: str) -> List[Dict[str, str]]:
 def _build_payload(model: str, request: GeminiRequest) -> Dict[str, Any]:
     """构建请求payload"""
     request_dict = request.model_dump()
+    if request.generationConfig:
+        if request.generationConfig.maxOutputTokens is None:
+            # 如果未指定最大输出长度，则不传递该字段，解决截断的问题
+            request_dict["generationConfig"].pop("maxOutputTokens")
+
     payload = {
         "contents": request_dict.get("contents", []),
         "tools": _build_tools(model, request_dict),
@@ -103,7 +110,7 @@ class GeminiChatService:
     """聊天服务"""
 
     def __init__(self, provider_manager: ProviderManager):
-        self.api_client = GeminiApiClient(settings.X_GOOG_API_CLIENT)
+        self.api_client = GeminiApiClient(settings.X_GOOG_API_CLIENT, timeout=settings.MAX_TIMEOUT)
         self.provider_manager = provider_manager
         self.response_handler = GeminiResponseHandler()
 
@@ -147,9 +154,8 @@ class GeminiChatService:
                         line = line[6:]
                         response_data = self.response_handler.handle_response(json.loads(line), model, stream=True)
                         text = self._extract_text_from_response(response_data)
-
-                        # 如果有文本内容，使用流式输出优化器处理
-                        if text:
+                        # 如果有文本内容，且开启了流式输出优化器，则使用流式输出优化器处理
+                        if text and settings.STREAM_OPTIMIZER_ENABLED:
                             # 使用流式输出优化器处理文本输出
                             async for optimized_chunk in gemini_optimizer.optimize_stream_output(
                                 text,

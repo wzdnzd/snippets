@@ -1,6 +1,6 @@
 ---
 title: Gnc2API
-emoji: 🐨
+emoji: 😹
 colorFrom: purple
 colorTo: blue
 sdk: docker

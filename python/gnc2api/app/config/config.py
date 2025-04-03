@@ -14,6 +14,7 @@ from app.core.constants import (
     DEFAULT_STREAM_MAX_DELAY,
     DEFAULT_STREAM_MIN_DELAY,
     DEFAULT_STREAM_SHORT_TEXT_THRESHOLD,
+    DEFAULT_TIMEOUT,
     DEFAULT_X_GOOG_API_CLIENT,
 )
 
@@ -40,6 +41,7 @@ class Settings(BaseSettings):
     TOOLS_CODE_EXECUTION_ENABLED: bool = False
 
     MAX_FAILURES: int = 3
+    MAX_TIMEOUT: int = DEFAULT_TIMEOUT
     X_GOOG_API_CLIENT: str = ""
     BASE_URL: str = f"https://generativelanguage.googleapis.com/{API_VERSION}"
 
@@ -51,6 +53,7 @@ class Settings(BaseSettings):
     CLOUDFLARE_IMGBED_AUTH_CODE: str = ""
 
     # 流式输出优化器配置
+    STREAM_OPTIMIZER_ENABLED: bool = False
     STREAM_MIN_DELAY: float = DEFAULT_STREAM_MIN_DELAY
     STREAM_MAX_DELAY: float = DEFAULT_STREAM_MAX_DELAY
     STREAM_SHORT_TEXT_THRESHOLD: int = DEFAULT_STREAM_SHORT_TEXT_THRESHOLD

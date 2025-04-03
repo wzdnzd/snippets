@@ -68,6 +68,14 @@ class ProviderManager:
 
         return {"valid_providers": valid_providers, "invalid_providers": invalid_providers}
 
+    async def get_first_valid_provider(self) -> str:
+        """获取第一个有效的API Provider"""
+        async with self.failure_count_lock:
+            for provider in self.provider_failure_counts:
+                if self.provider_failure_counts[provider] < self.MAX_FAILURES:
+                    return provider
+        return self.providers[0]
+
 
 _singleton_instance = None
 _singleton_lock = asyncio.Lock()

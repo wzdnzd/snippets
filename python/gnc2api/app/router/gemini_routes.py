@@ -39,13 +39,14 @@ model_service = ModelService(settings.SEARCH_MODELS, settings.IMAGE_MODELS)
 @router.get("/models")
 @router_v1beta.get("/models")
 async def list_models(
-    _=Depends(security_service.verify_key), provider_manager: ProviderManager = Depends(get_provider_manager)
+    _=Depends(security_service.verify_key_or_goog_api_key),
+    provider_manager: ProviderManager = Depends(get_provider_manager),
 ):
     """获取可用的Gemini模型列表"""
     logger.info("-" * 50 + "list_gemini_models" + "-" * 50)
     logger.info("Handling Gemini models list request")
 
-    provider = await provider_manager.get_next_working_provider()
+    provider = await provider_manager.get_first_valid_provider()
     logger.info(f"Using API Provider: {provider}")
 
     models_json = model_service.get_gemini_models(provider)
@@ -90,7 +91,7 @@ async def list_models(
 async def generate_content(
     model_name: str,
     request: GeminiRequest,
-    _=Depends(security_service.verify_goog_api_key),
+    _=Depends(security_service.verify_key_or_goog_api_key),
     provider: str = Depends(get_next_working_provider_wrapper),
     api_key: str = Depends(get_key),
     provider_manager: ProviderManager = Depends(get_provider_manager),
@@ -124,7 +125,7 @@ async def generate_content(
 async def stream_generate_content(
     model_name: str,
     request: GeminiRequest,
-    _=Depends(security_service.verify_goog_api_key),
+    _=Depends(security_service.verify_key_or_goog_api_key),
     provider: str = Depends(get_next_working_provider_wrapper),
     api_key: str = Depends(get_key),
     provider_manager: ProviderManager = Depends(get_provider_manager),
