@@ -822,8 +822,23 @@ async function handleProxyRequest(body, headers, options = {}, method = 'POST') 
 
             body.model = 'o3-mini';
 
-            // see: https://community.openai.com/t/is-03-mini-in-the-api-the-low-medium-or-high-version/1110423
+            // See: https://community.openai.com/t/is-03-mini-in-the-api-the-low-medium-or-high-version/1110423
             body.reasoning_effort = reasoning_effort;
+        } else if (/claude-3[.\-]7-sonnet/.test(body.model)
+            && model.endsWith('-thinking')
+            && !body.model.endsWith('-thinking')
+            && !body.thinking) {
+            // See: https://github.com/QuantumNous/new-api/blob/main/relay/channel/claude/relay-claude.go#L107-L120
+            let maxToken = body.max_tokens;
+            if (!maxToken || maxToken < 1280) {
+                maxToken = 1280;
+            }
+
+            body.max_tokens = maxToken;
+            body.temperature = 1.0;
+            body.thinking = { "type": "enabled", "budget_tokens": Math.ceil(maxToken * 0.8) };
+
+            delete body.top_p;
         }
 
         if (isChatCompletion) {
@@ -853,7 +868,7 @@ async function handleProxyRequest(body, headers, options = {}, method = 'POST') 
             } else if (rateLimitStatusCodes.has(response.status)) {
                 console.warn(`Upstream is busy, address: ${url}, token: ${accessToken}`);
             } else {
-                console.error(`Failed to request, address: ${url}, token: ${accessToken}, status: ${response.status}`);
+                console.error(`Failed to request, address: ${url}, token: ${accessToken}, model: ${body.model}, status: ${response.status}`);
             }
         } else {
             invalidFlag = true;
@@ -1295,33 +1310,80 @@ function isValidURL(url) {
 }
 
 /**
- * Stream response
+ * Stream response - handles both streaming and one-time responses
  */
 async function streamResponse(response, writable, model, messageId) {
-    const reader = response.body.getReader();
     const writer = writable.getWriter();
     const encoder = new TextEncoder();
     const decoder = new TextDecoder("utf-8");
 
-    function push() {
-        reader.read().then(({ done, value }) => {
-            if (done) {
-                writer.close();
-                return;
+    // Check if the response is text/html and not a stream
+    const contentType = response.headers.get('Content-Type') || '';
+    const isHtmlOneTime = contentType.includes('text/html');
+
+    if (isHtmlOneTime) {
+        // For one-time HTML response containing stream-like data
+        try {
+            const text = await response.text();
+
+            // Check if the content has "data:" format
+            const hasDataPrefix = text.includes('data: ');
+
+            if (hasDataPrefix) {
+                // Process data: formatted content
+                // Split by double newlines to get each data chunk
+                const chunks = text.split('\n\n');
+
+                for (const chunk of chunks) {
+                    if (chunk.trim().startsWith('data: ')) {
+                        // Send chunk as is with double newline
+                        writer.write(encoder.encode(chunk + '\n\n'));
+                        // Optional: small delay to simulate streaming
+                        await new Promise(resolve => setTimeout(resolve, 5));
+                    }
+                }
+            } else {
+                // Regular text, convert to SSE format
+                const lines = text.split('\n');
+                for (const line of lines) {
+                    if (line.trim()) {
+                        const toSend = `data: ${transformToJSON(line, model, messageId)}\n\n`;
+                        writer.write(encoder.encode(toSend));
+                    }
+                }
             }
 
-            const chunk = decoder.decode(value, { stream: true });
-            const toSend = `data: ${transformToJSON(chunk, model, messageId)}\n\n`;
-
-            writer.write(encoder.encode(toSend));
-            push();
-        }).catch(error => {
-            console.error(error);
+            // Send completion signal
+            writer.write(encoder.encode('data: [DONE]\n\n'));
             writer.close();
-        });
-    }
+        } catch (error) {
+            console.error('Error processing HTML response:', error);
+            writer.close();
+        }
+    } else {
+        // Original streaming implementation
+        const reader = response.body.getReader();
 
-    push();
+        function push() {
+            reader.read().then(({ done, value }) => {
+                if (done) {
+                    writer.close();
+                    return;
+                }
+
+                const chunk = decoder.decode(value, { stream: true });
+                const toSend = `data: ${transformToJSON(chunk, model, messageId)}\n\n`;
+
+                writer.write(encoder.encode(toSend));
+                push();
+            }).catch(error => {
+                console.error(error);
+                writer.close();
+            });
+        }
+
+        push();
+    }
 }
 
 /**
