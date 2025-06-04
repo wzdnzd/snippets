@@ -3,6 +3,7 @@
 # @Author  : wzdnzd
 # @Time    : 2025-06-01
 
+import concurrent.futures
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -49,7 +50,7 @@ def jaccard(s1: set, s2: set) -> float:
 
     return c1 / c2
 
-@utils.calc_time
+
 def compute(words:set, record:EnumRecord) -> float:
     if not words or not record or not isinstance(record, EnumRecord):
         return 0.0
@@ -64,7 +65,6 @@ def tokenize(text:str) -> list[str]:
     return jieba.cut(text)
 
 
-@utils.calc_time
 def allocate(item: dict, data_type: str) -> tuple[TableInfo, list[EnumRecord]]:
     data_type = utils.trim(data_type)
     if not item or not isinstance(item, dict) or not data_type:
@@ -98,7 +98,6 @@ def allocate(item: dict, data_type: str) -> tuple[TableInfo, list[EnumRecord]]:
     return TableInfo(name=table_name, columns=unnecessaries), necessaries
 
 
-@utils.calc_time
 def assign(tables:list[dict], data_type:str) -> tuple[dict[str,TableInfo], list[EnumRecord]]:
     if not tables or not isinstance(tables, list):
         return {}, []
@@ -140,7 +139,7 @@ def select(records: list[EnumRecord], top_k:int, data_type:str) -> TableInfo:
 
 @utils.calc_time
 def retrieve_column_value_options_name(
-    question: str, tables: list[dict], top_k: int = 10, data_type:str="str"
+    question: str, tables: list[dict], top_k: int = 10, data_type:str="str", timeout: float = None
 ) -> list[dict]:
     text = utils.trim(question)
     if not text:
@@ -156,32 +155,137 @@ def retrieve_column_value_options_name(
     if not data_type:
         raise ValueError("必须知道需要被计算的列的数据类型")
 
-    # 过滤出需要计算的目标
-    mappings, records = assign(tables=tables, data_type=data_type)
+    # 如果指定了超时时间，使用超时处理逻辑
+    if timeout is not None and timeout > 0:
+        try:
+            # 使用ThreadPoolExecutor来实现超时控制
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                # 提交任务
+                future = executor.submit(_retrieve, question, tables, top_k, data_type)
+
+                try:
+                    # 等待结果，如果超时会抛出TimeoutError
+                    result = future.result(timeout=timeout)
+                    return result
+                except concurrent.futures.TimeoutError:
+                    # 超时了，取消任务。无法强制停止，仅标记为取消
+                    future.cancel()
+                    raise utils.TimeoutError(
+                        func="_retrieve",
+                        timeout=timeout,
+                        count=len(tables) if tables else 0
+                    )
+        except utils.TimeoutError as e:
+            # 超时情况：使用截断策略
+            logger.warning(f"执行超时: {e}，将使用截断策略")
+            return _truncate_column_values(tables=tables, top_k=top_k, data_type=data_type)
+
+    # 无超时限制，正常执行逻辑
+    return _retrieve(question, tables, top_k, data_type)
+
+
+def _retrieve(question: str, tables: list[dict], top_k: int, data_type: str) -> list[dict]:
+    """
+    支持并行处理的列值选项检索函数
+    智能检测是否在子进程中运行，避免嵌套多进程问题，并行处理
+    """
+    # 第一步：并行过滤出需要计算的目标（直接调用allocate，避免嵌套）
+    if not tables or not isinstance(tables, list):
+        return []
+
+    tasks = [[t, data_type] for t in tables]
+    results = utils.multi_process_run(func=allocate, tasks=tasks)
+
+    mappings, records = dict(), list()
+    for t, r in results:
+        if not t or not isinstance(t, TableInfo):
+            continue
+
+        mappings[t.name] = t
+        records.extend(r)
+
     if not records:
         return tables
 
-    # 对 question 分词
+    # 第二步：对 question 分词
     s1 = set(tokenize(question))
     jobs = [[s1, r] for r in records]
 
-    # 并行计算 jaccard 相似度
+    # 第三步：并行计算 jaccard 相似度
     similarities = utils.multi_process_run(func=compute, tasks=jobs)
 
-    # 按表名及列名进行分组
+    # 第四步：按表名及列名进行分组
     groups = defaultdict(lambda: defaultdict(list))
     for i, r in enumerate(records):
         r.similarity = similarities[i]
         groups[r.table][r.column].append(r)
 
-    # 对每个表每个字段并行排序并挑选出 top_k 个候选值
+    # 第五步：对每个表每个字段并行排序并挑选出 top_k 个候选值
     tasks = [[items, top_k, data_type] for inner in groups.values() for items in inner.values()]
     infos = utils.multi_process_run(func=select, tasks=tasks)
     for info in infos:
         if not info or not isinstance(info, TableInfo):
             continue
-        
+
         mappings[info.name].columns.extend(info.columns)
 
     # 将 mappings 转换成原 tables 数据结构并返回
     return [{"table_name":k, "column_info":v.columns} for k, v in mappings.items()]
+
+
+def _truncate_column_values(tables: list[dict], top_k: int, data_type: str) -> list[dict]:
+    """
+    截断函数：直接返回每个指定data_type类型列的前top_k个取值，不进行相似度计算
+
+    Args:
+        tables: 数据库表信息列表
+        top_k: 每列返回的最大值数量
+        data_type: 目标数据类型
+
+    Returns:
+        截断后的表信息列表
+    """
+    if not tables or not isinstance(tables, list):
+        return []
+
+    result = []
+    for table in tables:
+        if not table or not isinstance(table, dict):
+            continue
+
+        table_name = table.get("table_name", "")
+        columns = table.get("column_info", [])
+
+        if not columns or not isinstance(columns, list):
+            continue
+
+        truncated_columns = []
+        for column in columns:
+            if not column or not isinstance(column, dict):
+                continue
+
+            # 只处理指定数据类型的列
+            if column.get("data_format", "") == data_type:
+                column_name = column.get("column_name", "")
+                values = column.get("column_enum_value", [])
+
+                if values and isinstance(values, list):
+                    # 截断到前top_k个值
+                    truncated_values = values[:top_k]
+                    truncated_column = {
+                        "data_format": data_type,
+                        "column_name": column_name,
+                        "column_enum_value": truncated_values
+                    }
+                    truncated_columns.append(truncated_column)
+            else:
+                # 非目标数据类型的列直接保留
+                truncated_columns.append(column)
+
+        if truncated_columns:
+            result.append({
+                "table_name": table_name,
+                "column_info": truncated_columns
+            })
+
+    return result
